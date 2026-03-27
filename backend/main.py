@@ -266,3 +266,15 @@ async def stream_run(websocket: WebSocket, run_id: str):
         pass
     finally:
         deregister_ws_listener(run_id, queue)
+
+
+# ===========================================================================
+# Static frontend (MUST be last — after all API routes)
+# ===========================================================================
+
+from pathlib import Path as _Path
+from fastapi.staticfiles import StaticFiles as _StaticFiles
+
+_dist = _Path(__file__).parent.parent / "frontend" / "dist"
+if _dist.exists():
+    app.mount("/", _StaticFiles(directory=str(_dist), html=True), name="frontend")

@@ -4,8 +4,9 @@ from pathlib import Path
 
 from sqlmodel import Session, SQLModel, create_engine
 
-DATABASE_URL = "sqlite:///./forge.db"
-SETTINGS_PATH = Path("./forge_settings.json")
+_data_dir = Path(os.environ.get('FORGE_DATA_DIR', '.'))
+DATABASE_URL = f"sqlite:///{_data_dir / 'forge.db'}"
+SETTINGS_PATH = _data_dir / 'forge_settings.json'
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 

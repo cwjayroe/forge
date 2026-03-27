@@ -3,12 +3,14 @@ Stub MCP memory client backed by a local JSON file.
 Supports search (substring), store, list, and delete.
 """
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-MEMORY_PATH = Path("./forge_memory.json")
+_data_dir = Path(os.environ.get('FORGE_DATA_DIR', '.'))
+MEMORY_PATH = _data_dir / 'forge_memory.json'
 
 
 class MemoryClient:
