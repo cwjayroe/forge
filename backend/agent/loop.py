@@ -4,7 +4,7 @@ Core agent loop. Model-agnostic; driven by a ModelAdapter.
 import asyncio
 import json
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Awaitable, Callable, Optional
 
 from .adapters.base import ModelAdapter, ToolCall
 from .tools import (
@@ -33,10 +33,12 @@ class Agent:
         model: ModelAdapter,
         workspace: str,
         memory: MemoryClient,
+        approval_gate: Optional[Callable[[str], Awaitable[bool]]] = None,
     ):
         self.model = model
         self.workspace = workspace
         self.memory = memory
+        self._approval_gate = approval_gate
         self._abort = asyncio.Event()
 
     def abort(self) -> None:
@@ -168,6 +170,10 @@ class Agent:
             elif name == "list_files":
                 return await list_files(args.get("path", "."), self.workspace)
             elif name == "run_bash":
+                if self._approval_gate:
+                    approved = await self._approval_gate(args["command"])
+                    if not approved:
+                        return "Command rejected by user."
                 return await run_bash(args["command"], self.workspace)
             elif name == "search_files":
                 return await search_files(args["pattern"], self.workspace)

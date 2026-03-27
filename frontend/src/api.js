@@ -42,3 +42,11 @@ export const deleteMemory = (id) => apiFetch(`/memory/${id}`, { method: 'DELETE'
 // Settings
 export const getSettings = () => apiFetch('/settings')
 export const saveSettings = (body) => apiFetch('/settings', { method: 'PUT', body })
+
+// Bash approval
+export const approveBash = (runId, approved) =>
+  apiFetch(`/runs/${runId}/bash/approve`, { method: 'POST', body: { approved } })
+
+// Templates
+export const listTemplates = (path) =>
+  apiFetch(`/templates?path=${encodeURIComponent(path)}`)

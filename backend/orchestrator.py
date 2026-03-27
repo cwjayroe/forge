@@ -26,6 +26,10 @@ active_agents: dict[str, Agent] = {}
 # Per run_id: list of asyncio.Queue for WebSocket listeners
 _ws_queues: dict[str, list[asyncio.Queue]] = {}
 
+# Bash approval gates: run_id → (Event, result)
+_bash_approvals: dict[str, asyncio.Event] = {}
+_bash_results: dict[str, bool] = {}
+
 
 # ---------------------------------------------------------------------------
 # WebSocket broadcasting
@@ -69,7 +73,10 @@ def _make_adapter(task: Task) -> OllamaAdapter:
 
     if provider == "anthropic":
         from .agent.adapters.anthropic import AnthropicAdapter
-        return AnthropicAdapter(model=model_name)  # type: ignore[return-value]
+        from .database import get_settings as _get_settings
+        s = _get_settings()
+        api_key = s.get("anthropic_api_key") or None
+        return AnthropicAdapter(model=model_name, api_key=api_key)  # type: ignore[return-value]
 
     # Default: Ollama
     return OllamaAdapter(model=model_name)
@@ -91,8 +98,32 @@ async def _run_agent(run_id: str, task: Task, engine) -> None:
             except OSError:
                 pass
 
+    from .database import get_settings as _get_settings
+    settings = _get_settings()
+    require_approval = settings.get("require_bash_approval", False)
+
     adapter = _make_adapter(task)
-    agent = Agent(model=adapter, workspace=task.workspace, memory=memory)
+
+    async def bash_gate(command: str) -> bool:
+        event = asyncio.Event()
+        _bash_approvals[run_id] = event
+        _bash_results[run_id] = False
+        await on_event({"type": "bash_approval_request", "command": command})
+        try:
+            await asyncio.wait_for(event.wait(), timeout=300.0)
+            return _bash_results.get(run_id, False)
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            _bash_approvals.pop(run_id, None)
+            _bash_results.pop(run_id, None)
+
+    agent = Agent(
+        model=adapter,
+        workspace=task.workspace,
+        memory=memory,
+        approval_gate=bash_gate if require_approval else None,
+    )
     active_agents[run_id] = agent
 
     async def on_event(event: dict) -> None:
@@ -182,6 +213,16 @@ async def start_run(run_id: str, task: Task, engine) -> None:
     coro = _run_agent(run_id, task, engine)
     task_handle = asyncio.create_task(coro)
     active_runs[run_id] = task_handle
+
+
+def resolve_bash_approval(run_id: str, approved: bool) -> bool:
+    """Signal a pending bash approval gate. Returns False if no gate is waiting."""
+    event = _bash_approvals.get(run_id)
+    if not event:
+        return False
+    _bash_results[run_id] = approved
+    event.set()
+    return True
 
 
 async def abort_run(run_id: str) -> bool:

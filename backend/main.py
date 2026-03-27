@@ -8,11 +8,14 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
 from .database import create_db_and_tables, engine, get_session, get_settings, save_settings
 from .memory import MemoryClient
+from pathlib import Path
+
 from .models import (
     Run,
     RunEvent,
@@ -22,7 +25,7 @@ from .models import (
     TaskReorder,
     TaskUpdate,
 )
-from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, start_run
+from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, resolve_bash_approval, start_run
 
 app = FastAPI(title="Forge", version="0.1.0")
 
@@ -177,6 +180,18 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
     }
 
 
+class BashApproval(BaseModel):
+    approved: bool
+
+
+@app.post("/runs/{run_id}/bash/approve")
+async def approve_bash(run_id: str, payload: BashApproval):
+    ok = resolve_bash_approval(run_id, payload.approved)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No pending bash approval for this run")
+    return {"ok": True}
+
+
 @app.post("/runs/{run_id}/abort")
 async def abort_run_endpoint(run_id: str, session: Session = Depends(get_session)):
     run = session.get(Run, run_id)
@@ -234,6 +249,38 @@ def get_settings_endpoint():
 def update_settings(payload: Settings):
     save_settings(payload.model_dump())
     return payload
+
+
+# ===========================================================================
+# Templates
+# ===========================================================================
+
+@app.get("/templates")
+def list_templates(path: str = ""):
+    """List .md files in the given directory and return title + content."""
+    if not path:
+        return []
+    dir_path = Path(path).expanduser().resolve()
+    if not dir_path.is_dir():
+        return []
+    results = []
+    for md_file in sorted(dir_path.rglob("*.md")):
+        try:
+            content = md_file.read_text(encoding="utf-8", errors="replace")
+            title = md_file.stem
+            for line in content.splitlines():
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            results.append({
+                "name": md_file.name,
+                "path": str(md_file),
+                "title": title,
+                "content": content,
+            })
+        except OSError:
+            continue
+    return results
 
 
 # ===========================================================================

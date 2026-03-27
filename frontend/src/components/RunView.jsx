@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { abortRun, getRun } from '../api'
+import { abortRun, approveBash, getRun } from '../api'
 import useWebSocket from '../hooks/useWebSocket'
 import { useTasksContext } from '../TasksContext'
 
@@ -16,6 +16,9 @@ export default function RunView() {
   const [aborting, setAborting] = useState(false)
   const [elapsed, setElapsed] = useState('0s')
   const [expandedEvents, setExpandedEvents] = useState(new Set())
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [fileDiffs, setFileDiffs] = useState({})
+  const [bashApproval, setBashApproval] = useState(null)
 
   const feedBottomRef = useRef(null)
 
@@ -50,6 +53,38 @@ export default function RunView() {
   const dedupedLive = liveEvents.filter((e) => e.id == null || !initialIds.has(e.id))
   const allEvents = [...initialEvents, ...dedupedLive]
 
+  // Build file diff map: path → diff string from write_file tool_result events
+  useEffect(() => {
+    const map = {}
+    for (let i = 0; i < allEvents.length; i++) {
+      const e = allEvents[i]
+      const content = e.content != null && typeof e.content === 'object' ? e.content : e
+      if (content?.type === 'tool_call' && content?.name === 'write_file') {
+        const path = content?.input?.path
+        if (!path) continue
+        // find the next tool_result for write_file after this index
+        for (let j = i + 1; j < allEvents.length; j++) {
+          const re = allEvents[j]
+          const rc = re.content != null && typeof re.content === 'object' ? re.content : re
+          if (rc?.type === 'tool_result' && rc?.name === 'write_file') {
+            map[path] = rc?.result ?? ''
+            break
+          }
+        }
+      }
+    }
+    setFileDiffs(map)
+  }, [allEvents.length])
+
+  // Watch live events for bash approval requests
+  useEffect(() => {
+    if (liveEvents.length === 0) return
+    const last = liveEvents[liveEvents.length - 1]
+    if (last?.type === 'bash_approval_request') {
+      setBashApproval({ command: last.command })
+    }
+  }, [liveEvents])
+
   // Auto-scroll feed
   useEffect(() => {
     feedBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -81,6 +116,13 @@ export default function RunView() {
     }
   }
 
+  const handleBashApproval = async (approved) => {
+    setBashApproval(null)
+    try {
+      await approveBash(runId, approved)
+    } catch (_) {}
+  }
+
   const toggleExpand = (idx) => {
     setExpandedEvents((prev) => {
       const next = new Set(prev)
@@ -110,6 +152,33 @@ export default function RunView() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-900">
+      {/* Bash approval modal */}
+      {bashApproval && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg shadow-xl">
+            <h2 className="text-base font-semibold mb-1">Allow bash command?</h2>
+            <p className="text-xs text-gray-400 mb-3">The agent wants to run:</p>
+            <pre className="bg-gray-900 rounded px-3 py-2 text-sm text-yellow-300 font-mono overflow-x-auto mb-5">
+              {bashApproval.command}
+            </pre>
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleBashApproval(true)}
+                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition-colors"
+              >
+                Allow
+              </button>
+              <button
+                onClick={() => handleBashApproval(false)}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+              >
+                Deny
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-4 px-6 py-3 bg-gray-800 border-b border-gray-700 flex-shrink-0">
         <button
@@ -131,7 +200,7 @@ export default function RunView() {
         <div className="px-6 py-2 bg-red-900/30 text-red-400 text-sm">{error}</div>
       )}
 
-      {/* Body: feed + files */}
+      {/* Body: feed + sidebar */}
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Event feed */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 min-w-0">
@@ -159,17 +228,42 @@ export default function RunView() {
           <div ref={feedBottomRef} />
         </div>
 
-        {/* Right: Files written */}
-        <div className="w-56 flex-shrink-0 border-l border-gray-700 p-4 overflow-y-auto">
-          <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Files Written</h3>
-          {filesWritten.length === 0 ? (
-            <p className="text-xs text-gray-600">None yet</p>
-          ) : (
-            <ul className="space-y-1">
-              {filesWritten.map((p) => (
-                <li key={p} className="text-xs text-green-400 font-mono break-all">{p}</li>
-              ))}
-            </ul>
+        {/* Right: Files written + diff viewer */}
+        <div className="w-64 flex-shrink-0 border-l border-gray-700 flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-gray-700 flex-shrink-0">
+            <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Files Written</h3>
+            {filesWritten.length === 0 ? (
+              <p className="text-xs text-gray-600">None yet</p>
+            ) : (
+              <ul className="space-y-1">
+                {filesWritten.map((p) => (
+                  <li key={p}>
+                    <button
+                      onClick={() => setSelectedFile(selectedFile === p ? null : p)}
+                      className={`text-xs font-mono break-all text-left w-full rounded px-1.5 py-1 transition-colors ${
+                        selectedFile === p
+                          ? 'bg-orange-500/20 text-orange-300'
+                          : 'text-green-400 hover:bg-gray-700'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Diff panel */}
+          {selectedFile && (
+            <div className="flex-1 overflow-y-auto p-3">
+              <p className="text-xs text-gray-500 mb-2 font-mono truncate">{selectedFile}</p>
+              {fileDiffs[selectedFile] ? (
+                <DiffView diff={fileDiffs[selectedFile]} />
+              ) : (
+                <p className="text-xs text-gray-600">No diff available</p>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -199,12 +293,30 @@ export default function RunView() {
   )
 }
 
+function DiffView({ diff }) {
+  const lines = diff.split('\n')
+  return (
+    <pre className="text-xs font-mono leading-relaxed overflow-x-auto">
+      {lines.map((line, i) => {
+        let cls = 'text-gray-500'
+        if (line.startsWith('+') && !line.startsWith('+++')) cls = 'text-green-400 bg-green-900/20'
+        else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-red-400 bg-red-900/20'
+        else if (line.startsWith('@@')) cls = 'text-blue-400'
+        else if (line.startsWith('---') || line.startsWith('+++')) cls = 'text-gray-400'
+        return (
+          <span key={i} className={`block ${cls}`}>{line || ' '}</span>
+        )
+      })}
+    </pre>
+  )
+}
+
 function EventItem({ event, idx, expanded, onToggle }) {
   // Content can be the top-level event object (from WS) or event.content (from REST)
   const content = event.content != null && typeof event.content === 'object' ? event.content : event
   const type = content.type || event.type
 
-  if (type === 'ping' || type === 'done') {
+  if (type === 'ping' || type === 'done' || type === 'bash_approval_request') {
     return null
   }
 

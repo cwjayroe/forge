@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getSettings, searchMemory, updateTask } from '../api'
+import { createTask, getSettings, listTemplates, searchMemory, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -26,6 +26,8 @@ export default function TaskEditor({ task, onClose, onSaved }) {
   const [error, setError] = useState(null)
   const [memoryPreview, setMemoryPreview] = useState([])
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [templates, setTemplates] = useState([])
+  const [showTemplates, setShowTemplates] = useState(false)
   const overlayRef = useRef(null)
 
   // Populate form on open
@@ -70,6 +72,17 @@ export default function TaskEditor({ task, onClose, onSaved }) {
     }, 500)
     return () => clearTimeout(timer)
   }, [form.title])
+
+  // Load templates from workspace directory
+  useEffect(() => {
+    if (!form.workspace) { setTemplates([]); return }
+    listTemplates(form.workspace).then(setTemplates).catch(() => setTemplates([]))
+  }, [form.workspace])
+
+  const applyTemplate = (tpl) => {
+    setForm((f) => ({ ...f, title: tpl.title, description: tpl.content }))
+    setShowTemplates(false)
+  }
 
   const handleDepends = (e) => {
     const selected = Array.from(e.target.selectedOptions).map((o) => o.value)
@@ -126,7 +139,36 @@ export default function TaskEditor({ task, onClose, onSaved }) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Field label="Title *">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-sm text-gray-400">Title *</label>
+              {templates.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplates((v) => !v)}
+                    className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                  >
+                    Load from file…
+                  </button>
+                  {showTemplates && (
+                    <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[200px] max-h-48 overflow-y-auto">
+                      {templates.map((tpl) => (
+                        <button
+                          key={tpl.path}
+                          type="button"
+                          onClick={() => applyTemplate(tpl)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
+                        >
+                          <span className="block text-gray-200 truncate">{tpl.title}</span>
+                          <span className="block text-gray-500 truncate">{tpl.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <input
               required
               className={input}
@@ -134,7 +176,7 @@ export default function TaskEditor({ task, onClose, onSaved }) {
               onChange={(e) => set('title', e.target.value)}
               placeholder="Implement feature X"
             />
-          </Field>
+          </div>
 
           <Field label="Description *">
             <textarea

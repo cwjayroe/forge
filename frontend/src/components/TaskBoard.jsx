@@ -12,7 +12,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { deleteTask, getRuns, reorderTasks, runTask } from '../api'
 import { useTasksContext } from '../TasksContext'
@@ -39,6 +39,12 @@ export default function TaskBoard() {
   const navigate = useNavigate()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  useEffect(() => {
+    const handler = () => { setEditingTask(null); setShowEditor(true) }
+    window.addEventListener('forge:new-task', handler)
+    return () => window.removeEventListener('forge:new-task', handler)
+  }, [])
 
   const pendingTasks = tasks.filter((t) => t.status === 'pending')
   const pendingIds = pendingTasks.map((t) => t.id)
