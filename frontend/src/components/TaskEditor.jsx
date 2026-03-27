@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getSettings, updateTask } from '../api'
+import { createTask, getSettings, searchMemory, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -24,6 +24,8 @@ export default function TaskEditor({ task, onClose, onSaved }) {
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [memoryPreview, setMemoryPreview] = useState([])
+  const [previewLoading, setPreviewLoading] = useState(false)
   const overlayRef = useRef(null)
 
   // Populate form on open
@@ -51,6 +53,23 @@ export default function TaskEditor({ task, onClose, onSaved }) {
   }, [task])
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
+
+  // Debounced memory preview on title change
+  useEffect(() => {
+    if (form.title.trim().length < 3) {
+      setMemoryPreview([])
+      return
+    }
+    setPreviewLoading(true)
+    const timer = setTimeout(async () => {
+      try {
+        const results = await searchMemory(form.title)
+        setMemoryPreview(results.slice(0, 3))
+      } catch (_) {}
+      finally { setPreviewLoading(false) }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [form.title])
 
   const handleDepends = (e) => {
     const selected = Array.from(e.target.selectedOptions).map((o) => o.value)
@@ -126,6 +145,19 @@ export default function TaskEditor({ task, onClose, onSaved }) {
               placeholder="Describe what the agent should do…"
             />
           </Field>
+
+          {(previewLoading || memoryPreview.length > 0) && (
+            <Field label="What Forge knows about this task">
+              {previewLoading
+                ? <p className="text-xs text-gray-500">Searching memory…</p>
+                : memoryPreview.map((m) => (
+                    <div key={m.id} className="text-xs bg-gray-700/50 rounded px-2 py-1.5 mb-1 text-gray-300 line-clamp-2">
+                      {m.content}
+                    </div>
+                  ))
+              }
+            </Field>
+          )}
 
           <Field label="Workspace">
             <input

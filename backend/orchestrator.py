@@ -154,6 +154,21 @@ async def _run_agent(run_id: str, task: Task, engine) -> None:
 
         session.commit()
 
+    # Persist run summary to memory (best-effort)
+    if summary and final_status in ("completed", "review"):
+        try:
+            await memory.store(
+                f"Task: {task.title}\n\n{summary}",
+                {
+                    "source": "run_completion",
+                    "run_id": run_id,
+                    "task_id": task.id,
+                    "task_title": task.title,
+                },
+            )
+        except Exception:
+            pass  # memory failure must not affect run status
+
     # Signal WebSocket listeners that the stream is done
     await _broadcast(run_id, {"type": "done", "status": final_status})
 

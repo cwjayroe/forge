@@ -9,6 +9,7 @@ const DEFAULTS = {
   mcp_server_host: 'http://localhost:8080',
   require_bash_approval: false,
   theme: 'dark',
+  memory_model: 'llama3.2',
 }
 
 export default function Settings() {
@@ -95,6 +96,15 @@ export default function Settings() {
             className={input}
             value={form.mcp_server_host}
             onChange={(e) => set('mcp_server_host', e.target.value)}
+          />
+        </Field>
+
+        <Field label="Memory model (Ollama)">
+          <input
+            className={input}
+            value={form.memory_model || ''}
+            onChange={(e) => set('memory_model', e.target.value)}
+            placeholder="llama3.2"
           />
         </Field>
 

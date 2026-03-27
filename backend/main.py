@@ -42,7 +42,11 @@ memory_client: MemoryClient = None  # type: ignore[assignment]
 async def on_startup():
     global memory_client
     create_db_and_tables()
-    memory_client = MemoryClient()
+    s = get_settings()
+    memory_client = MemoryClient(
+        ollama_host=s.get('ollama_host', 'http://localhost:11434'),
+        memory_model=s.get('memory_model', 'llama3.2'),
+    )
 
 
 # ===========================================================================

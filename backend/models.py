@@ -87,3 +87,4 @@ class Settings(BaseModel):
     mcp_server_host: str = "http://localhost:8080"
     require_bash_approval: bool = False
     theme: str = "dark"
+    memory_model: str = "llama3.2"
