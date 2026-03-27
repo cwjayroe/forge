@@ -1,0 +1,7 @@
+forge.db
+forge_memory.json
+forge_settings.json
+__pycache__/
+*.pyc
+*.pyo
+.env
