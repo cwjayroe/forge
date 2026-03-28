@@ -196,6 +196,9 @@ export default function RunView() {
         <StatusBadge status={run?.status} />
       </div>
 
+      {/* Phase progress bar */}
+      <PhaseProgress currentPhase={run?.current_phase} phases={run?.phases || []} />
+
       {error && (
         <div className="px-6 py-2 bg-red-900/30 text-red-400 text-sm">{error}</div>
       )}
@@ -228,8 +231,13 @@ export default function RunView() {
           <div ref={feedBottomRef} />
         </div>
 
-        {/* Right: Files written + diff viewer */}
+        {/* Right: Phases + Files written + diff viewer */}
         <div className="w-64 flex-shrink-0 border-l border-gray-700 flex flex-col overflow-hidden">
+          {/* Phase artifacts */}
+          {(run?.phases || []).length > 0 && (
+            <PhaseArtifacts phases={run?.phases || []} />
+          )}
+
           <div className="p-4 border-b border-gray-700 flex-shrink-0">
             <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Files Written</h3>
             {filesWritten.length === 0 ? (
@@ -320,6 +328,30 @@ function EventItem({ event, idx, expanded, onToggle }) {
     return null
   }
 
+  if (type === 'phase_start') {
+    const phase = content.phase || 'unknown'
+    const attempt = content.attempt || 1
+    const phaseColors = { plan: 'border-blue-500 text-blue-400', build: 'border-amber-500 text-amber-400', qa: 'border-purple-500 text-purple-400' }
+    return (
+      <div className={`border-t-2 ${phaseColors[phase] || 'border-gray-500 text-gray-400'} pt-2 mt-3 mb-1`}>
+        <span className="text-xs font-semibold uppercase tracking-wider">
+          {phase} phase{attempt > 1 ? ` (attempt ${attempt})` : ''}
+        </span>
+      </div>
+    )
+  }
+
+  if (type === 'phase_end') {
+    const phase = content.phase || 'unknown'
+    const status = content.status || 'unknown'
+    const isOk = status === 'completed'
+    return (
+      <div className={`text-xs py-1 ${isOk ? 'text-green-400' : 'text-red-400'}`}>
+        {isOk ? '✓' : '✗'} {phase} phase {status}
+      </div>
+    )
+  }
+
   if (type === 'text') {
     const text = content.content ?? content.text ?? (typeof event.content === 'string' ? event.content : '')
     if (!text) return null
@@ -399,6 +431,106 @@ function StatusBadge({ status }) {
     <span className={`text-xs px-2 py-1 rounded capitalize ${styles[status] || 'bg-gray-700 text-gray-400'}`}>
       {status}
     </span>
+  )
+}
+
+function PhaseProgress({ currentPhase, phases }) {
+  const PHASE_ORDER = ['plan', 'build', 'qa']
+  const phaseStatus = {}
+  for (const p of phases) {
+    // Use the latest attempt's status for each phase
+    if (!phaseStatus[p.phase] || p.attempt > (phaseStatus[p.phase].attempt || 0)) {
+      phaseStatus[p.phase] = p
+    }
+  }
+
+  const colors = {
+    plan: { active: 'bg-blue-500', done: 'bg-blue-400', text: 'text-blue-400' },
+    build: { active: 'bg-amber-500', done: 'bg-amber-400', text: 'text-amber-400' },
+    qa: { active: 'bg-purple-500', done: 'bg-purple-400', text: 'text-purple-400' },
+  }
+
+  return (
+    <div className="flex items-center gap-0 px-6 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
+      {PHASE_ORDER.map((phase, i) => {
+        const info = phaseStatus[phase]
+        const isCurrent = currentPhase === phase
+        const isDone = info?.status === 'completed'
+        const isFailed = info?.status === 'failed'
+        const c = colors[phase]
+        const attempt = info?.attempt || 0
+
+        return (
+          <React.Fragment key={phase}>
+            {i > 0 && (
+              <div className={`h-0.5 w-8 ${isDone || isCurrent ? 'bg-gray-500' : 'bg-gray-700'}`} />
+            )}
+            <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+              isCurrent ? `${c.active} text-white` :
+              isDone ? `bg-gray-700 ${c.text}` :
+              isFailed ? 'bg-red-900/40 text-red-400' :
+              'bg-gray-800 text-gray-500'
+            }`}>
+              {isDone && <span>✓</span>}
+              {isFailed && <span>✗</span>}
+              {isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
+              <span className="capitalize">{phase}</span>
+              {attempt > 1 && <span className="text-[10px] opacity-70">#{attempt}</span>}
+            </div>
+          </React.Fragment>
+        )
+      })}
+    </div>
+  )
+}
+
+function PhaseArtifacts({ phases }) {
+  const [expanded, setExpanded] = useState(null)
+
+  const phaseColors = {
+    plan: 'text-blue-400',
+    build: 'text-amber-400',
+    qa: 'text-purple-400',
+  }
+
+  const statusIcons = {
+    completed: '✓',
+    failed: '✗',
+    running: '…',
+  }
+
+  return (
+    <div className="p-4 border-b border-gray-700 flex-shrink-0">
+      <h3 className="text-xs text-gray-400 uppercase tracking-wider mb-3">Phases</h3>
+      <ul className="space-y-1">
+        {phases.map((p) => (
+          <li key={p.id}>
+            <button
+              onClick={() => setExpanded(expanded === p.id ? null : p.id)}
+              className={`text-xs w-full text-left rounded px-1.5 py-1 transition-colors hover:bg-gray-700 ${
+                expanded === p.id ? 'bg-gray-700' : ''
+              }`}
+            >
+              <span className={`${p.status === 'failed' ? 'text-red-400' : phaseColors[p.phase] || 'text-gray-400'}`}>
+                {statusIcons[p.status] || '○'} {p.phase}
+              </span>
+              {p.attempt > 1 && <span className="text-gray-500 ml-1">#{p.attempt}</span>}
+            </button>
+            {expanded === p.id && p.artifact && (
+              <pre className="text-xs text-gray-400 bg-gray-900/50 rounded p-2 mt-1 max-h-48 overflow-y-auto overflow-x-auto whitespace-pre-wrap">
+                {p.artifact.startsWith('VERDICT: PASS') ? (
+                  <span className="text-green-400">{p.artifact}</span>
+                ) : p.artifact.startsWith('VERDICT: FAIL') ? (
+                  <span className="text-red-400">{p.artifact}</span>
+                ) : (
+                  p.artifact
+                )}
+              </pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

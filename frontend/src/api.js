@@ -50,3 +50,12 @@ export const approveBash = (runId, approved) =>
 // Templates
 export const listTemplates = (path) =>
   apiFetch(`/templates?path=${encodeURIComponent(path)}`)
+
+// Pipeline
+export const startPipeline = () => apiFetch('/pipeline/start', { method: 'POST' })
+export const pausePipeline = () => apiFetch('/pipeline/pause', { method: 'POST' })
+export const resumePipeline = () => apiFetch('/pipeline/resume', { method: 'POST' })
+export const getPipelineStatus = () => apiFetch('/pipeline/status')
+
+// Run phases
+export const getRunPhases = (runId) => apiFetch(`/runs/${runId}/phases`)

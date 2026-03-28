@@ -19,6 +19,7 @@ from pathlib import Path
 from .models import (
     Run,
     RunEvent,
+    RunPhase,
     Settings,
     Task,
     TaskCreate,
@@ -26,6 +27,7 @@ from .models import (
     TaskUpdate,
 )
 from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, resolve_bash_approval, start_run
+from .scheduler import get_pipeline_status, pause_pipeline, start_pipeline, validate_dependencies
 
 app = FastAPI(title="Forge", version="0.1.0")
 
@@ -70,9 +72,21 @@ def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
         spec_path=payload.spec_path,
         mode=payload.mode,
         model=payload.model,
+        plan_model=payload.plan_model,
+        qa_model=payload.qa_model,
+        max_retries=payload.max_retries,
         workspace=payload.workspace,
         depends_on=payload.depends_on,
     )
+
+    # Validate dependencies won't create cycles
+    if payload.depends_on:
+        all_tasks = session.exec(select(Task)).all()
+        all_tasks_plus = list(all_tasks) + [task]
+        err = validate_dependencies(task.id, payload.depends_on, all_tasks_plus)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
     session.add(task)
     session.commit()
     session.refresh(task)
@@ -98,7 +112,16 @@ def update_task(task_id: str, payload: TaskUpdate, session: Session = Depends(ge
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+
+    # Validate dependency changes won't create cycles
+    update_data = payload.model_dump(exclude_unset=True)
+    if "depends_on" in update_data and update_data["depends_on"] is not None:
+        all_tasks = session.exec(select(Task)).all()
+        err = validate_dependencies(task_id, update_data["depends_on"], list(all_tasks))
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
+    for field, value in update_data.items():
         setattr(task, field, value)
     task.updated_at = datetime.utcnow()
     session.add(task)
@@ -113,12 +136,15 @@ def delete_task(task_id: str, session: Session = Depends(get_session)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Delete associated runs and events
+    # Delete associated runs, phases, and events
     runs = session.exec(select(Run).where(Run.task_id == task_id)).all()
     for run in runs:
         events = session.exec(select(RunEvent).where(RunEvent.run_id == run.id)).all()
         for event in events:
             session.delete(event)
+        phases = session.exec(select(RunPhase).where(RunPhase.run_id == run.id)).all()
+        for phase in phases:
+            session.delete(phase)
         session.delete(run)
 
     session.delete(task)
@@ -171,12 +197,16 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
     events = session.exec(
         select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.id)
     ).all()
+    phases = session.exec(
+        select(RunPhase).where(RunPhase.run_id == run_id).order_by(RunPhase.started_at)
+    ).all()
     return {
         **run.model_dump(),
         "events": [
             {**e.model_dump(), "content": json.loads(e.content)}
             for e in events
         ],
+        "phases": [p.model_dump() for p in phases],
     }
 
 
@@ -209,6 +239,50 @@ async def abort_run_endpoint(run_id: str, session: Session = Depends(get_session
         session.commit()
 
     return {"ok": True, "was_running": was_running}
+
+
+# ===========================================================================
+# Run Phases
+# ===========================================================================
+
+@app.get("/runs/{run_id}/phases")
+def list_run_phases(run_id: str, session: Session = Depends(get_session)):
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    phases = session.exec(
+        select(RunPhase)
+        .where(RunPhase.run_id == run_id)
+        .order_by(RunPhase.started_at)
+    ).all()
+    return [p.model_dump() for p in phases]
+
+
+# ===========================================================================
+# Pipeline
+# ===========================================================================
+
+@app.post("/pipeline/start")
+async def start_pipeline_endpoint():
+    started = await start_pipeline(engine)
+    return {"ok": True, "started_task_ids": started}
+
+
+@app.post("/pipeline/pause")
+async def pause_pipeline_endpoint():
+    await pause_pipeline()
+    return {"ok": True, "paused": True}
+
+
+@app.post("/pipeline/resume")
+async def resume_pipeline_endpoint():
+    started = await start_pipeline(engine)
+    return {"ok": True, "paused": False, "started_task_ids": started}
+
+
+@app.get("/pipeline/status")
+def pipeline_status_endpoint():
+    return get_pipeline_status(engine)
 
 
 # ===========================================================================

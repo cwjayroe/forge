@@ -14,7 +14,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { deleteTask, getRuns, reorderTasks, runTask } from '../api'
+import { deleteTask, getRuns, getPipelineStatus, pausePipeline, reorderTasks, resumePipeline, runTask, startPipeline } from '../api'
 import { useTasksContext } from '../TasksContext'
 import TaskEditor from './TaskEditor'
 
@@ -25,9 +25,10 @@ const COLUMNS = [
   { key: 'done',    label: 'Done'    },
 ]
 
-// 'failed' tasks are shown in Done column with red indicator
+// Map task statuses to board columns
 function getColumnKey(status) {
   if (status === 'failed') return 'done'
+  if (status === 'planning' || status === 'building' || status === 'qa') return 'running'
   return status
 }
 
@@ -36,7 +37,17 @@ export default function TaskBoard() {
   const [showEditor, setShowEditor] = useState(false)
   const [editingTask, setEditingTask] = useState(null)
   const [actionError, setActionError] = useState(null)
+  const [pipelineStatus, setPipelineStatus] = useState(null)
+  const [pipelineActing, setPipelineActing] = useState(false)
   const navigate = useNavigate()
+
+  // Poll pipeline status
+  useEffect(() => {
+    const fetch = () => getPipelineStatus().then(setPipelineStatus).catch(() => {})
+    fetch()
+    const id = setInterval(fetch, 3000)
+    return () => clearInterval(id)
+  }, [])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -62,6 +73,30 @@ export default function TaskBoard() {
     } catch (_) {
       refresh()
     }
+  }
+
+  const handlePipelineStart = async () => {
+    setPipelineActing(true)
+    try {
+      await startPipeline()
+      refresh()
+    } catch (e) { setActionError(e.message) }
+    finally { setPipelineActing(false) }
+  }
+
+  const handlePipelineToggle = async () => {
+    setPipelineActing(true)
+    try {
+      if (pipelineStatus?.paused) {
+        await resumePipeline()
+      } else {
+        await pausePipeline()
+      }
+      const s = await getPipelineStatus()
+      setPipelineStatus(s)
+      refresh()
+    } catch (e) { setActionError(e.message) }
+    finally { setPipelineActing(false) }
   }
 
   const handleRun = async (task) => {
@@ -120,12 +155,40 @@ export default function TaskBoard() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-semibold">Task Board</h1>
-        <button
-          onClick={handleNew}
-          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition-colors"
-        >
-          + New Task
-        </button>
+        <div className="flex items-center gap-3">
+          {pipelineStatus && (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              {pipelineStatus.paused && (
+                <span className="text-yellow-400">⏸ Paused</span>
+              )}
+              {pipelineStatus.status_counts?.planning > 0 && <span className="text-blue-400">{pipelineStatus.status_counts.planning} planning</span>}
+              {pipelineStatus.status_counts?.building > 0 && <span className="text-amber-400">{pipelineStatus.status_counts.building} building</span>}
+              {pipelineStatus.status_counts?.qa > 0 && <span className="text-purple-400">{pipelineStatus.status_counts.qa} qa</span>}
+            </div>
+          )}
+          <button
+            onClick={handlePipelineStart}
+            disabled={pipelineActing}
+            className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded text-sm font-medium transition-colors"
+          >
+            {pipelineActing ? '…' : '▶ Start Pipeline'}
+          </button>
+          {pipelineStatus && (
+            <button
+              onClick={handlePipelineToggle}
+              disabled={pipelineActing}
+              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded text-sm transition-colors"
+            >
+              {pipelineStatus.paused ? '▶ Resume' : '⏸ Pause'}
+            </button>
+          )}
+          <button
+            onClick={handleNew}
+            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition-colors"
+          >
+            + New Task
+          </button>
+        </div>
       </div>
 
       {actionError && (
@@ -197,7 +260,7 @@ export default function TaskBoard() {
 
 function TaskCard({ task, onEdit, onRun, onDelete, onClick }) {
   const isPending = task.status === 'pending'
-  const isRunning = task.status === 'running'
+  const isRunning = ['running', 'planning', 'building', 'qa'].includes(task.status)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id, disabled: !isPending })
@@ -272,7 +335,16 @@ function TaskCard({ task, onEdit, onRun, onDelete, onClick }) {
           </>
         )}
         {isRunning && (
-          <span className="text-xs text-yellow-400 animate-pulse">Running…</span>
+          <span className={`text-xs animate-pulse ${
+            task.status === 'planning' ? 'text-blue-400'
+              : task.status === 'qa' ? 'text-purple-400'
+              : 'text-yellow-400'
+          }`}>
+            {task.status === 'planning' ? 'Planning…'
+              : task.status === 'building' ? 'Building…'
+              : task.status === 'qa' ? 'QA…'
+              : 'Running…'}
+          </span>
         )}
       </div>
     </div>
@@ -283,6 +355,9 @@ function StatusDot({ status }) {
   const colors = {
     pending:  'bg-gray-500',
     running:  'bg-yellow-400 animate-pulse',
+    planning: 'bg-blue-400 animate-pulse',
+    building: 'bg-amber-400 animate-pulse',
+    qa:       'bg-purple-400 animate-pulse',
     review:   'bg-blue-400',
     done:     'bg-green-400',
     failed:   'bg-red-500',
