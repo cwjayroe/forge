@@ -16,6 +16,9 @@ const EMPTY = {
   spec_path: '',
   mode: 'autonomous',
   model: MODEL_OPTIONS[0],
+  plan_model: '',
+  qa_model: '',
+  max_retries: 3,
   depends_on: [],
 }
 
@@ -40,6 +43,9 @@ export default function TaskEditor({ task, onClose, onSaved }) {
         spec_path: task.spec_path || '',
         mode: task.mode || 'autonomous',
         model: task.model || MODEL_OPTIONS[0],
+        plan_model: task.plan_model || '',
+        qa_model: task.qa_model || '',
+        max_retries: task.max_retries ?? 3,
         depends_on: task.depends_on ? task.depends_on.split(',').filter(Boolean) : [],
       })
     } else {
@@ -49,6 +55,8 @@ export default function TaskEditor({ task, onClose, onSaved }) {
           ...EMPTY,
           workspace: s.workspace || '',
           model: s.default_model || MODEL_OPTIONS[0],
+          plan_model: s.default_plan_model || '',
+          qa_model: s.default_qa_model || '',
         }))
       }).catch(() => {})
     }
@@ -100,6 +108,9 @@ export default function TaskEditor({ task, onClose, onSaved }) {
       spec_path: form.spec_path || undefined,
       mode: form.mode,
       model: form.model,
+      plan_model: form.plan_model || undefined,
+      qa_model: form.qa_model || undefined,
+      max_retries: form.max_retries,
       depends_on: form.depends_on.length ? form.depends_on.join(',') : undefined,
     }
     try {
@@ -250,6 +261,46 @@ export default function TaskEditor({ task, onClose, onSaved }) {
                   <option key={m} value={m}>{m}</option>
                 ))}
               </select>
+            </Field>
+          </div>
+
+          <div className="space-y-3 border border-gray-700 rounded p-3">
+            <p className="text-xs text-gray-500 uppercase tracking-wider">Phase Models</p>
+            <div className="flex gap-4">
+              <Field label="Plan model" className="flex-1">
+                <select
+                  className={input}
+                  value={form.plan_model}
+                  onChange={(e) => set('plan_model', e.target.value)}
+                >
+                  <option value="">Use build model</option>
+                  {MODEL_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="QA model" className="flex-1">
+                <select
+                  className={input}
+                  value={form.qa_model}
+                  onChange={(e) => set('qa_model', e.target.value)}
+                >
+                  <option value="">Use build model</option>
+                  {MODEL_OPTIONS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <Field label="Max QA retries">
+              <input
+                type="number"
+                min={1}
+                max={10}
+                className={`${input} w-24`}
+                value={form.max_retries}
+                onChange={(e) => set('max_retries', parseInt(e.target.value) || 3)}
+              />
             </Field>
           </div>
 

@@ -4,6 +4,9 @@ import { getSettings, saveSettings } from '../api'
 const DEFAULTS = {
   workspace: '',
   default_model: 'ollama/qwen2.5-coder:32b',
+  default_plan_model: '',
+  default_qa_model: '',
+  max_concurrent_tasks: 3,
   anthropic_api_key: '',
   ollama_host: 'http://localhost:11434',
   mcp_server_host: 'http://localhost:8080',
@@ -64,12 +67,41 @@ export default function Settings() {
           />
         </Field>
 
-        <Field label="Default model">
+        <Field label="Default model (build phase)">
           <input
             className={input}
             value={form.default_model}
             onChange={(e) => set('default_model', e.target.value)}
             placeholder="ollama/qwen2.5-coder:32b"
+          />
+        </Field>
+
+        <Field label="Default plan model">
+          <input
+            className={input}
+            value={form.default_plan_model || ''}
+            onChange={(e) => set('default_plan_model', e.target.value)}
+            placeholder="Leave empty to use build model"
+          />
+        </Field>
+
+        <Field label="Default QA model">
+          <input
+            className={input}
+            value={form.default_qa_model || ''}
+            onChange={(e) => set('default_qa_model', e.target.value)}
+            placeholder="Leave empty to use build model"
+          />
+        </Field>
+
+        <Field label="Max concurrent tasks">
+          <input
+            type="number"
+            min={1}
+            max={10}
+            className={`${input} w-24`}
+            value={form.max_concurrent_tasks}
+            onChange={(e) => set('max_concurrent_tasks', parseInt(e.target.value) || 3)}
           />
         </Field>
 

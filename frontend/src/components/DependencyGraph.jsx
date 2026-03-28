@@ -5,6 +5,9 @@ import TaskEditor from './TaskEditor'
 const STATUS_COLORS = {
   pending:  { fill: '#374151', stroke: '#6b7280', text: '#d1d5db' },
   running:  { fill: '#451a03', stroke: '#d97706', text: '#fcd34d' },
+  planning: { fill: '#1e1b4b', stroke: '#3b82f6', text: '#93c5fd' },
+  building: { fill: '#451a03', stroke: '#d97706', text: '#fcd34d' },
+  qa:       { fill: '#2e1065', stroke: '#7c3aed', text: '#c4b5fd' },
   review:   { fill: '#1e1b4b', stroke: '#7c3aed', text: '#c4b5fd' },
   done:     { fill: '#052e16', stroke: '#16a34a', text: '#86efac' },
   failed:   { fill: '#450a0a', stroke: '#dc2626', text: '#fca5a5' },
