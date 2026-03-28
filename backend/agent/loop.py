@@ -34,53 +34,66 @@ class Agent:
         workspace: str,
         memory: MemoryClient,
         approval_gate: Optional[Callable[[str], Awaitable[bool]]] = None,
+        allowed_tools: Optional[set[str]] = None,
     ):
         self.model = model
         self.workspace = workspace
         self.memory = memory
         self._approval_gate = approval_gate
+        self._allowed_tools = allowed_tools  # None means all tools allowed
         self._abort = asyncio.Event()
 
     def abort(self) -> None:
         self._abort.set()
 
+    def _get_tool_definitions(self) -> list[dict]:
+        """Return tool definitions filtered by allowed_tools."""
+        if self._allowed_tools is None:
+            return TOOL_DEFINITIONS
+        return [t for t in TOOL_DEFINITIONS if t["name"] in self._allowed_tools]
+
     async def run(
         self,
         task_description: str,
-        spec_content: Optional[str],
         on_event: Callable,
+        system_prompt: Optional[str] = None,
+        spec_content: Optional[str] = None,
     ) -> str:
         """
         Run the agent loop for a task.
 
         Args:
-            task_description: The task to perform
-            spec_content: Optional spec/PRD file content to include in context
+            task_description: The task/user message to send to the model
             on_event: Async callback called with each event dict
+            system_prompt: Pre-built system prompt (used by phase orchestrator).
+                           If None, builds a default prompt (legacy behavior).
+            spec_content: Optional spec/PRD file content (only used if system_prompt is None)
 
         Returns:
             Summary string (last text response from the model)
         """
-        # 1. Pull relevant memory context
-        memory_results = await self.memory.search(task_description[:100])
-        memory_context = ""
-        if memory_results:
-            memory_context = "\n\nRelevant context from memory:\n" + json.dumps(memory_results, indent=2, default=str)
+        if system_prompt is None:
+            # Legacy behavior: build a default system prompt
+            memory_results = await self.memory.search(task_description[:100])
+            memory_context = ""
+            if memory_results:
+                memory_context = "\n\nRelevant context from memory:\n" + json.dumps(memory_results, indent=2, default=str)
 
-        # 2. Build system prompt
-        system_parts = [
-            f"You are an expert software engineer working in the workspace at: {self.workspace}",
-            f"Today's date: {datetime.utcnow().strftime('%Y-%m-%d')}",
-            "Use the provided tools to read, write, and explore the codebase to complete the task.",
-            "When you are done, call store_memory with a concise summary of what you did.",
-            "Be precise and make only the changes needed to complete the task.",
-        ]
-        if spec_content:
-            system_parts.append(f"\n\nSpec / PRD:\n{spec_content}")
-        if memory_context:
-            system_parts.append(memory_context)
+            system_parts = [
+                f"You are an expert software engineer working in the workspace at: {self.workspace}",
+                f"Today's date: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                "Use the provided tools to read, write, and explore the codebase to complete the task.",
+                "When you are done, call store_memory with a concise summary of what you did.",
+                "Be precise and make only the changes needed to complete the task.",
+            ]
+            if spec_content:
+                system_parts.append(f"\n\nSpec / PRD:\n{spec_content}")
+            if memory_context:
+                system_parts.append(memory_context)
 
-        system_prompt = "\n".join(system_parts)
+            system_prompt = "\n".join(system_parts)
+
+        tool_defs = self._get_tool_definitions()
 
         messages: list[dict] = [
             {"role": "system", "content": system_prompt},
@@ -95,7 +108,7 @@ class Agent:
                 raise AgentAbortedError("Agent was aborted")
 
             iterations += 1
-            response = await self.model.complete(messages, TOOL_DEFINITIONS)
+            response = await self.model.complete(messages, tool_defs)
 
             # Emit text event
             if response.text:
