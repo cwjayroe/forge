@@ -3,7 +3,7 @@ import { getSettings, saveSettings } from '../api'
 
 const DEFAULTS = {
   workspace: '',
-  default_model: 'ollama/qwen2.5-coder:32b',
+  default_model: 'ollama/qwen2.5-coder:latest',
   default_plan_model: '',
   default_qa_model: '',
   max_concurrent_tasks: 3,
@@ -72,7 +72,7 @@ export default function Settings() {
             className={input}
             value={form.default_model}
             onChange={(e) => set('default_model', e.target.value)}
-            placeholder="ollama/qwen2.5-coder:32b"
+            placeholder="ollama/qwen2.5-coder:latest"
           />
         </Field>
 

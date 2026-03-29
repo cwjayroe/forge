@@ -57,7 +57,7 @@ async def main():
             ),
             "workspace": workspace,
             "mode": "autonomous",
-            "model": "ollama/qwen2.5-coder:32b",
+            "model": "ollama/qwen2.5-coder:latest",
         }
 
         resp = await client.post("/tasks", json=task_payload)

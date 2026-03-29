@@ -25,7 +25,7 @@ class Task(SQLModel, table=True):
     mode: str = "autonomous"          # "autonomous" | "supervised"
     status: str = "pending"           # "pending" | "planning" | "building" | "qa" | "review" | "done" | "failed"
     depends_on: Optional[str] = None  # comma-separated task IDs
-    model: str = "ollama/qwen2.5-coder:32b"          # build model
+    model: str = "ollama/qwen2.5-coder:latest"          # build model (ollama/*, anthropic/*, claude-code/*)
     plan_model: Optional[str] = None                   # planning phase model (falls back to model)
     qa_model: Optional[str] = None                     # QA phase model (falls back to model)
     max_retries: int = 3                               # max build→QA retry cycles
@@ -38,19 +38,24 @@ class Task(SQLModel, table=True):
 class Run(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     task_id: str
+    build_id: Optional[str] = None    # slugified title + timestamp hash for memory key schema
     status: str = "running"           # "running" | "completed" | "failed" | "aborted"
-    current_phase: Optional[str] = None  # "plan" | "build" | "qa"
+    current_phase: Optional[str] = None  # "plan" | "validate" | "build" | "review" | "qa"
     started_at: datetime = Field(default_factory=_now)
     completed_at: Optional[datetime] = None
     summary: Optional[str] = None
     error: Optional[str] = None
+    test_baseline: Optional[str] = None  # pre-build test results for QA regression attribution
+    architecture_snapshot: Optional[str] = None  # stored by planner, used by builders/reviewers
 
 
 class RunPhase(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     run_id: str
-    phase: str                        # "plan" | "build" | "qa"
+    phase: str                        # "plan" | "validate" | "build" | "review" | "qa"
     attempt: int = 1                  # which attempt (for build/qa retries)
+    batch: Optional[int] = None       # batch number within a phase (for parallel builds)
+    task_index: Optional[int] = None  # task index within a batch (for per-task tracking)
     status: str = "running"           # "running" | "completed" | "failed"
     started_at: datetime = Field(default_factory=_now)
     completed_at: Optional[datetime] = None
@@ -75,7 +80,7 @@ class TaskCreate(BaseModel):
     description: str
     spec_path: Optional[str] = None
     mode: str = "autonomous"
-    model: str = "ollama/qwen2.5-coder:32b"
+    model: str = "ollama/qwen2.5-coder:latest"
     plan_model: Optional[str] = None
     qa_model: Optional[str] = None
     max_retries: int = 3
@@ -103,13 +108,15 @@ class TaskReorder(BaseModel):
 
 class Settings(BaseModel):
     workspace: str = ""
-    default_model: str = "ollama/qwen2.5-coder:32b"
+    default_model: str = "ollama/qwen2.5-coder:latest"  # ollama/*, anthropic/*, claude-code/*
     default_plan_model: Optional[str] = None
     default_qa_model: Optional[str] = None
     max_concurrent_tasks: int = 3
+    max_concurrent_builders: int = 3          # max parallel builder agents per batch
     anthropic_api_key: Optional[str] = None
     ollama_host: str = "http://localhost:11434"
     mcp_server_host: str = "http://localhost:8080"
     require_bash_approval: bool = False
+    capture_test_baseline: bool = True        # run tests before build to capture baseline
     theme: str = "dark"
     memory_model: str = "llama3.2"

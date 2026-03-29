@@ -9,12 +9,12 @@ from .base import ModelAdapter, Response, ToolCall
 class OllamaAdapter(ModelAdapter):
     """
     Adapter for Ollama's OpenAI-compatible /api/chat endpoint.
-    Default model: qwen2.5-coder:32b
+    Default model: qwen2.5-coder:latest
     """
 
     def __init__(
         self,
-        model: str = "qwen2.5-coder:32b",
+        model: str = "qwen2.5-coder:latest",
         host: str = "http://localhost:11434",
         timeout: float = 120.0,
     ):

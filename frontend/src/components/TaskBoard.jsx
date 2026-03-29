@@ -36,6 +36,7 @@ export default function TaskBoard() {
   const { tasks, setTasks, refresh } = useTasksContext()
   const [showEditor, setShowEditor] = useState(false)
   const [editingTask, setEditingTask] = useState(null)
+  const [cloningFrom, setCloningFrom] = useState(null)
   const [actionError, setActionError] = useState(null)
   const [pipelineStatus, setPipelineStatus] = useState(null)
   const [pipelineActing, setPipelineActing] = useState(false)
@@ -117,12 +118,20 @@ export default function TaskBoard() {
 
   const handleNew = () => {
     setEditingTask(null)
+    setCloningFrom(null)
+    setShowEditor(true)
+  }
+
+  const handleClone = (task) => {
+    setEditingTask(null)
+    setCloningFrom(task)
     setShowEditor(true)
   }
 
   const handleSaved = () => {
     setShowEditor(false)
     setEditingTask(null)
+    setCloningFrom(null)
     refresh()
   }
 
@@ -211,6 +220,7 @@ export default function TaskBoard() {
               onRun={handleRun}
               onDelete={handleDelete}
               onClick={handleCardClick}
+              onClone={handleClone}
             />
           ))
 
@@ -250,7 +260,8 @@ export default function TaskBoard() {
       {showEditor && (
         <TaskEditor
           task={editingTask}
-          onClose={() => { setShowEditor(false); setEditingTask(null) }}
+          cloneFrom={cloningFrom}
+          onClose={() => { setShowEditor(false); setEditingTask(null); setCloningFrom(null) }}
           onSaved={handleSaved}
         />
       )}
@@ -258,9 +269,10 @@ export default function TaskBoard() {
   )
 }
 
-function TaskCard({ task, onEdit, onRun, onDelete, onClick }) {
+function TaskCard({ task, onEdit, onRun, onDelete, onClick, onClone }) {
   const isPending = task.status === 'pending'
   const isRunning = ['running', 'planning', 'building', 'qa'].includes(task.status)
+  const isDone = ['done', 'failed', 'review'].includes(task.status)
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id, disabled: !isPending })
@@ -345,6 +357,30 @@ function TaskCard({ task, onEdit, onRun, onDelete, onClick }) {
               : task.status === 'qa' ? 'QA…'
               : 'Running…'}
           </span>
+        )}
+        {isDone && (
+          <>
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(task) }}
+              className="text-xs px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+            >
+              View
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onClone(task) }}
+              className="text-xs px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+            >
+              Clone
+            </button>
+          </>
+        )}
+        {isPending && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onClone(task) }}
+            className="text-xs px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+          >
+            Clone
+          </button>
         )}
       </div>
     </div>

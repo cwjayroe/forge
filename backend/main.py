@@ -26,7 +26,7 @@ from .models import (
     TaskReorder,
     TaskUpdate,
 )
-from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, resolve_bash_approval, start_run
+from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, resolve_bash_approval, resolve_plan_approval, start_run
 from .scheduler import get_pipeline_status, pause_pipeline, start_pipeline, validate_dependencies
 
 app = FastAPI(title="Forge", version="0.1.0")
@@ -222,6 +222,18 @@ async def approve_bash(run_id: str, payload: BashApproval):
     return {"ok": True}
 
 
+class PlanApproval(BaseModel):
+    approved: bool
+
+
+@app.post("/runs/{run_id}/plan/approve")
+async def approve_plan(run_id: str, payload: PlanApproval):
+    ok = resolve_plan_approval(run_id, payload.approved)
+    if not ok:
+        raise HTTPException(status_code=404, detail="No pending plan approval for this run")
+    return {"ok": True}
+
+
 @app.post("/runs/{run_id}/abort")
 async def abort_run_endpoint(run_id: str, session: Session = Depends(get_session)):
     run = session.get(Run, run_id)
@@ -289,20 +301,25 @@ def pipeline_status_endpoint():
 # Memory
 # ===========================================================================
 
+@app.get("/memory/projects")
+def list_memory_projects():
+    return memory_client.list_projects()
+
+
 @app.get("/memory/search")
-async def search_memory(q: str):
-    results = await memory_client.search(q)
+async def search_memory(q: str, project_id: Optional[str] = None):
+    results = await memory_client.search(q, project_id=project_id)
     return results
 
 
 @app.get("/memory/list")
-async def list_memory():
-    return await memory_client.list_all()
+async def list_memory(project_id: Optional[str] = None):
+    return await memory_client.list_all(project_id=project_id)
 
 
 @app.delete("/memory/{memory_id}", status_code=204)
-async def delete_memory(memory_id: str):
-    deleted = await memory_client.delete(memory_id)
+async def delete_memory(memory_id: str, project_id: Optional[str] = None):
+    deleted = await memory_client.delete(memory_id, project_id=project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory entry not found")
 

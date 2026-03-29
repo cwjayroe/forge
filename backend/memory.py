@@ -21,119 +21,89 @@ _data_dir = Path(os.environ.get('FORGE_DATA_DIR', '.'))
 # Optional memory_core import
 # ---------------------------------------------------------------------------
 
-try:
-    from memory_core import MemoryClient as _CoreClient, MemoryConfig
-    HAS_MEMORY_CORE = True
-except ImportError:
-    HAS_MEMORY_CORE = False
-    logger.warning(
-        "memory_core not installed — using JSON stub for memory. "
-        "Install with: pip install memory-core"
-    )
-
-
-# ---------------------------------------------------------------------------
-# JSON stub (private — used as fallback)
-# ---------------------------------------------------------------------------
-
-class _StubMemoryClient:
-    def __init__(self, path: Path):
-        self._path = path
-        self._memories: list[dict] = self._load()
-
-    def _load(self) -> list[dict]:
-        if self._path.exists():
-            try:
-                return json.loads(self._path.read_text())
-            except (json.JSONDecodeError, OSError):
-                return []
-        return []
-
-    def _save(self) -> None:
-        self._path.write_text(json.dumps(self._memories, indent=2, default=str))
-
-    def search(self, query: str) -> list[dict]:
-        q = query.lower()
-        return [m for m in self._memories if q in m.get("content", "").lower()]
-
-    def store(self, content: str, metadata: Optional[dict] = None) -> str:
-        entry = {
-            "id": str(uuid.uuid4()),
-            "content": content,
-            "metadata": metadata or {},
-            "created_at": datetime.utcnow().isoformat(),
-        }
-        self._memories.append(entry)
-        self._save()
-        return entry["id"]
-
-    def list_all(self) -> list[dict]:
-        return list(self._memories)
-
-    def delete(self, memory_id: str) -> bool:
-        before = len(self._memories)
-        self._memories = [m for m in self._memories if m["id"] != memory_id]
-        if len(self._memories) < before:
-            self._save()
-            return True
-        return False
-
+from memory_core import MemoryClient as _CoreClient, MemoryConfig
 
 # ---------------------------------------------------------------------------
 # Public async MemoryClient
 # ---------------------------------------------------------------------------
-
-def _to_dict(obj) -> dict:
-    """Normalise a memory_core dataclass/object to a plain dict."""
-    if isinstance(obj, dict):
-        return obj
-    if hasattr(obj, '__dict__'):
-        return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
-    return {"content": str(obj)}
-
 
 class MemoryClient:
     def __init__(
         self,
         ollama_host: str = 'http://localhost:11434',
         memory_model: str = 'llama3.2',
+        agent_id: str = 'forge',
     ):
-        if HAS_MEMORY_CORE:
-            self._core = _CoreClient(config=MemoryConfig(
-                chroma_path=str(_data_dir / 'chroma'),
-                ollama_host=ollama_host,
-                ollama_model=memory_model,
-                default_agent_id='forge',
-            ))
-            self._stub = None
-        else:
-            self._core = None
-            self._stub = _StubMemoryClient(_data_dir / 'forge_memory.json')
+        self._ollama_host = ollama_host
+        self._memory_model = memory_model
+        # Use MemoryConfig default chroma_path (~/.project-memory) so we share
+        # the same storage as the MCP memory server.
+        self._config = MemoryConfig(
+            ollama_host=ollama_host,
+            ollama_model=memory_model,
+        )
+        self._chroma_path = self._config.chroma_path
+        self._core = _CoreClient(agent_id=agent_id, config=self._config)
+        self._clients: dict[str, _CoreClient] = {agent_id: self._core}
 
-    async def search(self, query: str) -> list[dict]:
-        if self._core is not None:
-            results = await asyncio.to_thread(self._core.search, query)
-            return [_to_dict(r) for r in results]
-        return self._stub.search(query)  # type: ignore[union-attr]
+    def _get_core(self, project_id: Optional[str] = None) -> _CoreClient:
+        """Get or create a core client for the given project_id."""
+        if not project_id:
+            return self._core
+        if project_id not in self._clients:
+            self._clients[project_id] = _CoreClient(
+                agent_id=project_id,
+                config=MemoryConfig(
+                    chroma_path=self._chroma_path,
+                    ollama_host=self._ollama_host,
+                    ollama_model=self._memory_model,
+                ),
+            )
+        return self._clients[project_id]
+
+    def list_projects(self) -> list[str]:
+        """Scan chroma directory for available project-ids."""
+        chroma_dir = Path(self._chroma_path)
+        if not chroma_dir.exists():
+            return []
+        return sorted(
+            d.name for d in chroma_dir.iterdir()
+            if d.is_dir() and not d.name.startswith('.')
+        )
+
+    async def search(self, query: str, project_id: Optional[str] = None) -> list[dict]:
+        core = self._get_core(project_id)
+        results = await asyncio.to_thread(core.search, query)
+        return [
+            {"id": r.id, "content": r.content, "score": r.score, "metadata": r.metadata}
+            for r in results
+        ]
+
+    async def get_by_key(self, upsert_key: str) -> Optional[dict]:
+        """Retrieve a memory entry by its deterministic upsert key."""
+        entries = await asyncio.to_thread(self._core.list, {"upsert_key": upsert_key})
+        if entries:
+            e = entries[0]
+            return {"id": e.id, "content": e.content, "metadata": e.metadata}
+        return None
 
     async def store(self, content: str, metadata: Optional[dict] = None) -> str:
-        if self._core is not None:
-            entry = await asyncio.to_thread(self._core.store, content, metadata or {})
-            d = _to_dict(entry)
-            return str(d.get("id", ""))
-        return self._stub.store(content, metadata)  # type: ignore[union-attr]
+        entry = await asyncio.to_thread(self._core.store, content, metadata or {})
+        return entry.id
 
-    async def list_all(self) -> list[dict]:
-        if self._core is not None:
-            results = await asyncio.to_thread(self._core.list)
-            return [_to_dict(r) for r in results]
-        return self._stub.list_all()  # type: ignore[union-attr]
+    async def list_all(self, project_id: Optional[str] = None) -> list[dict]:
+        core = self._get_core(project_id)
+        entries = await asyncio.to_thread(core.list)
+        return [
+            {"id": e.id, "content": e.content, "metadata": e.metadata,
+             "created_at": e.created_at.isoformat() if getattr(e, 'created_at', None) else None}
+            for e in entries
+        ]
 
-    async def delete(self, memory_id: str) -> bool:
-        if self._core is not None:
-            try:
-                await asyncio.to_thread(self._core.delete, memory_id)
-                return True
-            except Exception:
-                return False
-        return self._stub.delete(memory_id)  # type: ignore[union-attr]
+    async def delete(self, memory_id: str, project_id: Optional[str] = None) -> bool:
+        core = self._get_core(project_id)
+        try:
+            await asyncio.to_thread(core.delete, memory_id)
+            return True
+        except Exception:
+            return False

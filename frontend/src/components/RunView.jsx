@@ -59,14 +59,15 @@ export default function RunView() {
     for (let i = 0; i < allEvents.length; i++) {
       const e = allEvents[i]
       const content = e.content != null && typeof e.content === 'object' ? e.content : e
-      if (content?.type === 'tool_call' && content?.name === 'write_file') {
-        const path = content?.input?.path
+      const isWriteTool = content?.type === 'tool_call' && ['write_file', 'Write', 'Edit'].includes(content?.name)
+      if (isWriteTool) {
+        const path = content?.input?.path || content?.input?.file_path
         if (!path) continue
-        // find the next tool_result for write_file after this index
+        // find the next tool_result for this write tool after this index
         for (let j = i + 1; j < allEvents.length; j++) {
           const re = allEvents[j]
           const rc = re.content != null && typeof re.content === 'object' ? re.content : re
-          if (rc?.type === 'tool_result' && rc?.name === 'write_file') {
+          if (rc?.type === 'tool_result') {
             map[path] = rc?.result ?? ''
             break
           }
@@ -141,8 +142,8 @@ export default function RunView() {
   const seenPaths = new Set()
   for (const e of allEvents) {
     const content = e.content || e
-    if (content?.type === 'tool_call' && content?.name === 'write_file') {
-      const p = content?.input?.path
+    if (content?.type === 'tool_call' && ['write_file', 'Write', 'Edit'].includes(content?.name)) {
+      const p = content?.input?.path || content?.input?.file_path
       if (p && !seenPaths.has(p)) {
         seenPaths.add(p)
         filesWritten.push(p)
@@ -331,7 +332,7 @@ function EventItem({ event, idx, expanded, onToggle }) {
   if (type === 'phase_start') {
     const phase = content.phase || 'unknown'
     const attempt = content.attempt || 1
-    const phaseColors = { plan: 'border-blue-500 text-blue-400', build: 'border-amber-500 text-amber-400', qa: 'border-purple-500 text-purple-400' }
+    const phaseColors = { plan: 'border-blue-500 text-blue-400', validate: 'border-cyan-500 text-cyan-400', build: 'border-amber-500 text-amber-400', review: 'border-teal-500 text-teal-400', qa: 'border-purple-500 text-purple-400' }
     return (
       <div className={`border-t-2 ${phaseColors[phase] || 'border-gray-500 text-gray-400'} pt-2 mt-3 mb-1`}>
         <span className="text-xs font-semibold uppercase tracking-wider">
@@ -435,29 +436,36 @@ function StatusBadge({ status }) {
 }
 
 function PhaseProgress({ currentPhase, phases }) {
-  const PHASE_ORDER = ['plan', 'build', 'qa']
+  const DEFAULT_ORDER = ['plan', 'build', 'qa']
+
+  // Derive the phase list from actual data; fall back to the default 3-phase pipeline
   const phaseStatus = {}
+  const seenOrder = []
   for (const p of phases) {
-    // Use the latest attempt's status for each phase
     if (!phaseStatus[p.phase] || p.attempt > (phaseStatus[p.phase].attempt || 0)) {
       phaseStatus[p.phase] = p
     }
+    if (!seenOrder.includes(p.phase)) seenOrder.push(p.phase)
   }
+  const phaseOrder = seenOrder.length > 0 ? seenOrder : DEFAULT_ORDER
 
   const colors = {
-    plan: { active: 'bg-blue-500', done: 'bg-blue-400', text: 'text-blue-400' },
-    build: { active: 'bg-amber-500', done: 'bg-amber-400', text: 'text-amber-400' },
-    qa: { active: 'bg-purple-500', done: 'bg-purple-400', text: 'text-purple-400' },
+    plan:     { active: 'bg-blue-500',   done: 'bg-blue-400',   text: 'text-blue-400' },
+    validate: { active: 'bg-cyan-500',   done: 'bg-cyan-400',   text: 'text-cyan-400' },
+    build:    { active: 'bg-amber-500',  done: 'bg-amber-400',  text: 'text-amber-400' },
+    review:   { active: 'bg-teal-500',   done: 'bg-teal-400',   text: 'text-teal-400' },
+    qa:       { active: 'bg-purple-500', done: 'bg-purple-400', text: 'text-purple-400' },
   }
+  const fallbackColor = { active: 'bg-gray-500', done: 'bg-gray-400', text: 'text-gray-400' }
 
   return (
     <div className="flex items-center gap-0 px-6 py-2 bg-gray-800/50 border-b border-gray-700 flex-shrink-0">
-      {PHASE_ORDER.map((phase, i) => {
+      {phaseOrder.map((phase, i) => {
         const info = phaseStatus[phase]
         const isCurrent = currentPhase === phase
         const isDone = info?.status === 'completed'
         const isFailed = info?.status === 'failed'
-        const c = colors[phase]
+        const c = colors[phase] || fallbackColor
         const attempt = info?.attempt || 0
 
         return (
@@ -489,7 +497,9 @@ function PhaseArtifacts({ phases }) {
 
   const phaseColors = {
     plan: 'text-blue-400',
+    validate: 'text-cyan-400',
     build: 'text-amber-400',
+    review: 'text-teal-400',
     qa: 'text-purple-400',
   }
 

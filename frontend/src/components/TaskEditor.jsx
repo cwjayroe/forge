@@ -3,7 +3,10 @@ import { createTask, getSettings, listTemplates, searchMemory, updateTask } from
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
-  'ollama/qwen2.5-coder:32b',
+  'claude-code/sonnet',
+  'claude-code/opus',
+  'claude-code/haiku',
+  'ollama/qwen2.5-coder:latest',
   'ollama/llama3.1:8b',
   'ollama/codellama:13b',
   'anthropic/claude-sonnet-4-5',
@@ -22,7 +25,7 @@ const EMPTY = {
   depends_on: [],
 }
 
-export default function TaskEditor({ task, onClose, onSaved }) {
+export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
   const { tasks } = useTasksContext()
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
@@ -48,6 +51,19 @@ export default function TaskEditor({ task, onClose, onSaved }) {
         max_retries: task.max_retries ?? 3,
         depends_on: task.depends_on ? task.depends_on.split(',').filter(Boolean) : [],
       })
+    } else if (cloneFrom) {
+      setForm({
+        title: (cloneFrom.title || '') + ' (copy)',
+        description: cloneFrom.description || '',
+        workspace: cloneFrom.workspace || '',
+        spec_path: cloneFrom.spec_path || '',
+        mode: cloneFrom.mode || 'autonomous',
+        model: cloneFrom.model || MODEL_OPTIONS[0],
+        plan_model: cloneFrom.plan_model || '',
+        qa_model: cloneFrom.qa_model || '',
+        max_retries: cloneFrom.max_retries ?? 3,
+        depends_on: [],
+      })
     } else {
       // Load defaults from settings for create mode
       getSettings().then((s) => {
@@ -60,7 +76,7 @@ export default function TaskEditor({ task, onClose, onSaved }) {
         }))
       }).catch(() => {})
     }
-  }, [task])
+  }, [task, cloneFrom])
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
@@ -140,7 +156,7 @@ export default function TaskEditor({ task, onClose, onSaved }) {
     >
       <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-semibold">{task ? 'Edit Task' : 'New Task'}</h2>
+          <h2 className="text-lg font-semibold">{task ? 'Edit Task' : cloneFrom ? 'Clone Task' : 'New Task'}</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-200 text-xl leading-none"
@@ -264,45 +280,53 @@ export default function TaskEditor({ task, onClose, onSaved }) {
             </Field>
           </div>
 
-          <div className="space-y-3 border border-gray-700 rounded p-3">
-            <p className="text-xs text-gray-500 uppercase tracking-wider">Phase Models</p>
-            <div className="flex gap-4">
-              <Field label="Plan model" className="flex-1">
-                <select
-                  className={input}
-                  value={form.plan_model}
-                  onChange={(e) => set('plan_model', e.target.value)}
-                >
-                  <option value="">Use build model</option>
-                  {MODEL_OPTIONS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="QA model" className="flex-1">
-                <select
-                  className={input}
-                  value={form.qa_model}
-                  onChange={(e) => set('qa_model', e.target.value)}
-                >
-                  <option value="">Use build model</option>
-                  {MODEL_OPTIONS.map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
+          {form.model.startsWith('claude-code/') ? (
+            <div className="border border-gray-700 rounded p-3">
+              <p className="text-xs text-gray-500">
+                Claude Code handles planning, building, and QA via the <span className="text-gray-300">/feature-plan-and-build</span> skill — no per-phase model config needed.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 border border-gray-700 rounded p-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wider">Phase Models</p>
+              <div className="flex gap-4">
+                <Field label="Plan model" className="flex-1">
+                  <select
+                    className={input}
+                    value={form.plan_model}
+                    onChange={(e) => set('plan_model', e.target.value)}
+                  >
+                    <option value="">Use build model</option>
+                    {MODEL_OPTIONS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="QA model" className="flex-1">
+                  <select
+                    className={input}
+                    value={form.qa_model}
+                    onChange={(e) => set('qa_model', e.target.value)}
+                  >
+                    <option value="">Use build model</option>
+                    {MODEL_OPTIONS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Max QA retries">
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  className={`${input} w-24`}
+                  value={form.max_retries}
+                  onChange={(e) => set('max_retries', parseInt(e.target.value) || 3)}
+                />
               </Field>
             </div>
-            <Field label="Max QA retries">
-              <input
-                type="number"
-                min={1}
-                max={10}
-                className={`${input} w-24`}
-                value={form.max_retries}
-                onChange={(e) => set('max_retries', parseInt(e.target.value) || 3)}
-              />
-            </Field>
-          </div>
+          )}
 
           {otherTasks.length > 0 && (
             <Field label="Depends on (hold Ctrl/Cmd to select multiple)">

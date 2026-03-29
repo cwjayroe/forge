@@ -35,9 +35,20 @@ export const getRun = (id) => apiFetch(`/runs/${id}`)
 export const abortRun = (id) => apiFetch(`/runs/${id}/abort`, { method: 'POST' })
 
 // Memory
-export const searchMemory = (q) => apiFetch(`/memory/search?q=${encodeURIComponent(q)}`)
-export const listMemory = () => apiFetch('/memory/list')
-export const deleteMemory = (id) => apiFetch(`/memory/${id}`, { method: 'DELETE' })
+export const listProjects = () => apiFetch('/memory/projects')
+export const searchMemory = (q, projectId) => {
+  const params = new URLSearchParams({ q })
+  if (projectId) params.set('project_id', projectId)
+  return apiFetch(`/memory/search?${params}`)
+}
+export const listMemory = (projectId) => {
+  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+  return apiFetch(`/memory/list${params}`)
+}
+export const deleteMemory = (id, projectId) => {
+  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+  return apiFetch(`/memory/${id}${params}`, { method: 'DELETE' })
+}
 
 // Settings
 export const getSettings = () => apiFetch('/settings')
