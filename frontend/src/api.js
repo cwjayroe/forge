@@ -49,6 +49,12 @@ export const deleteMemory = (id, projectId) => {
   const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
   return apiFetch(`/memory/${id}${params}`, { method: 'DELETE' })
 }
+export const getMemoryStats = (projectId) => {
+  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+  return apiFetch(`/memory/stats${params}`)
+}
+export const createMemory = (content, metadata, projectId) =>
+  apiFetch('/memory', { method: 'POST', body: { content, metadata, project_id: projectId } })
 
 // Settings
 export const getSettings = () => apiFetch('/settings')

@@ -100,6 +100,27 @@ class MemoryClient:
             for e in entries
         ]
 
+    async def get_stats(self, project_id: Optional[str] = None) -> dict:
+        """Return aggregate stats for a project scope."""
+        try:
+            from memory_core.memory_manager import MemoryManager
+            pid = project_id or self._core._agent_id
+            mgr = MemoryManager(self._config)
+            stats = await asyncio.to_thread(mgr.get_stats, pid)
+            return stats
+        except Exception:
+            # Fallback: derive basic stats from listing
+            entries = await self.list_all(project_id)
+            by_category: dict[str, int] = {}
+            for e in entries:
+                cat = (e.get("metadata") or {}).get("category") or "general"
+                by_category[cat] = by_category.get(cat, 0) + 1
+            return {
+                "total_count": len(entries),
+                "estimated_tokens": sum(len(e.get("content", "")) // 4 for e in entries),
+                "by_category": by_category,
+            }
+
     async def delete(self, memory_id: str, project_id: Optional[str] = None) -> bool:
         core = self._get_core(project_id)
         try:

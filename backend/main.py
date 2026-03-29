@@ -317,6 +317,26 @@ async def list_memory(project_id: Optional[str] = None):
     return await memory_client.list_all(project_id=project_id)
 
 
+@app.get("/memory/stats")
+async def memory_stats(project_id: Optional[str] = None):
+    return await memory_client.get_stats(project_id=project_id)
+
+
+class MemoryCreate(BaseModel):
+    content: str
+    metadata: Optional[dict] = None
+    project_id: Optional[str] = None
+
+
+@app.post("/memory", status_code=201)
+async def create_memory(payload: MemoryCreate):
+    meta = payload.metadata or {}
+    if payload.project_id:
+        meta["project_id"] = payload.project_id
+    memory_id = await memory_client.store(payload.content, meta)
+    return {"id": memory_id}
+
+
 @app.delete("/memory/{memory_id}", status_code=204)
 async def delete_memory(memory_id: str, project_id: Optional[str] = None):
     deleted = await memory_client.delete(memory_id, project_id=project_id)

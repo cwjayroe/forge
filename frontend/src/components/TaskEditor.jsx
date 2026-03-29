@@ -111,9 +111,13 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
     setShowTemplates(false)
   }
 
-  const handleDepends = (e) => {
-    const selected = Array.from(e.target.selectedOptions).map((o) => o.value)
-    set('depends_on', selected)
+  const toggleDep = (taskId) => {
+    setForm((f) => ({
+      ...f,
+      depends_on: f.depends_on.includes(taskId)
+        ? f.depends_on.filter((id) => id !== taskId)
+        : [...f.depends_on, taskId],
+    }))
   }
 
   const handleSubmit = async (e) => {
@@ -130,7 +134,7 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
       plan_model: form.plan_model || undefined,
       qa_model: form.qa_model || undefined,
       max_retries: form.max_retries,
-      depends_on: form.depends_on.length ? form.depends_on.join(',') : undefined,
+      depends_on: form.depends_on.length ? form.depends_on.join(',') : null,
     }
     try {
       const saved = task
@@ -332,17 +336,23 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
           )}
 
           {otherTasks.length > 0 && (
-            <Field label="Depends on (hold Ctrl/Cmd to select multiple)">
-              <select
-                multiple
-                className={`${input} h-24`}
-                value={form.depends_on}
-                onChange={handleDepends}
-              >
+            <Field label="Depends on">
+              <div className="bg-gray-700 border border-gray-600 rounded px-3 py-2 max-h-36 overflow-y-auto space-y-1">
                 {otherTasks.map((t) => (
-                  <option key={t.id} value={t.id}>{t.title}</option>
+                  <label
+                    key={t.id}
+                    className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer hover:text-white py-0.5"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.depends_on.includes(t.id)}
+                      onChange={() => toggleDep(t.id)}
+                      className="accent-orange-500 rounded"
+                    />
+                    <span className="truncate">{t.title}</span>
+                  </label>
                 ))}
-              </select>
+              </div>
             </Field>
           )}
 
