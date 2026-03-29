@@ -1,8 +1,8 @@
 # Forge
 
-**Forge** is an AI coding agent orchestrator. It automates software development tasks by running AI agents through a structured **Plan → Build → QA** pipeline, with a visual task board, real-time streaming output, dependency scheduling, and persistent memory.
+**Forge** is an AI coding agent orchestrator. It automates software development tasks by running AI agents through a structured **Plan → Validate → Build → Review → QA** pipeline, with a visual task board, real-time streaming output, dependency scheduling, and persistent memory.
 
-Forge runs as a desktop app (Electron) or as a standalone backend + web frontend. Agents can use local models via [Ollama](https://ollama.com) or cloud models via the [Anthropic API](https://www.anthropic.com).
+Forge runs as a desktop app (Electron) or as a standalone backend + web frontend. Agents can use local models via [Ollama](https://ollama.com), cloud models via the [Anthropic API](https://www.anthropic.com), or CLI-based tools like Claude Code and Cursor.
 
 ---
 
@@ -15,7 +15,7 @@ Forge runs as a desktop app (Electron) or as a standalone backend + web frontend
 - [Running Forge](#running-forge)
 - [Configuration](#configuration)
 - [Creating and Running Tasks](#creating-and-running-tasks)
-- [The Plan → Build → QA Pipeline](#the-plan--build--qa-pipeline)
+- [The Pipeline](#the-pipeline)
 - [Task Dependencies](#task-dependencies)
 - [Agent Tools](#agent-tools)
 - [Memory System](#memory-system)
@@ -31,16 +31,19 @@ Forge runs as a desktop app (Electron) or as a standalone backend + web frontend
 
 ## Features
 
-- **Three-phase pipeline** — agents plan, implement, and verify their own work
+- **Five-phase pipeline** — agents plan (2-pass), validate the plan, build in parallel batches, review each batch, and QA the full result
 - **Automatic QA retries** — failed QA sends feedback back into the build phase (up to N retries)
+- **Batched parallel builds** — builder agents run concurrently within each phase batch, up to a configurable limit
 - **DAG dependency scheduling** — tasks wait for their dependencies before starting; cycle detection prevents invalid graphs
 - **Concurrency control** — run multiple tasks in parallel up to a configurable limit
 - **Real-time WebSocket streaming** — watch every agent thought, tool call, and file change live
 - **Persistent memory** — completed task summaries are stored and injected as context for future runs
 - **Upstream context propagation** — dependent tasks automatically receive the plan artifacts of their dependencies
+- **Test baseline capture** — pre-build test results are captured so QA can distinguish regressions from pre-existing failures
 - **Bash approval gate** — optionally require human approval before the agent executes any shell command
+- **Plan approval gate** — in supervised mode, the plan is presented for review before building begins
 - **Supervised mode** — tasks land in a "Review" state instead of "Done", requiring manual sign-off
-- **Multiple model providers** — Ollama (local) and Anthropic Claude (cloud); mix per phase
+- **Multiple model providers** — Ollama (local), Anthropic Claude (cloud), Claude Code CLI, Cursor; mix per phase
 - **Desktop app** — ships as an Electron app (AppImage, .deb, .dmg)
 
 ---
@@ -60,7 +63,9 @@ Forge runs as a desktop app (Electron) or as a standalone backend + web frontend
 │                                     │
 │  Orchestrator ──► Agent Loop        │
 │  Scheduler    ──► Model Adapters    │
-│  Memory Client    (Ollama / Claude) │
+│  Memory Client    (Ollama / Claude  │
+│                    Claude Code /    │
+│                    Cursor)          │
 │                                     │
 │  SQLite (SQLModel ORM)              │
 └─────────────────────────────────────┘
@@ -79,15 +84,19 @@ Forge runs as a desktop app (Electron) or as a standalone backend + web frontend
 | API server | `backend/main.py` | FastAPI app, all REST endpoints, WebSocket stream |
 | Database models | `backend/models.py` | SQLModel ORM (Task, Run, RunPhase, RunEvent) + Pydantic schemas |
 | Database / settings | `backend/database.py` | SQLite engine, settings file I/O |
-| Orchestrator | `backend/orchestrator.py` | Runs the plan→build→QA pipeline, broadcasts events |
+| Orchestrator | `backend/orchestrator.py` | Runs the full pipeline, broadcasts events, manages approval gates |
 | Scheduler | `backend/scheduler.py` | DAG dependency resolution, concurrency control |
 | Agent loop | `backend/agent/loop.py` | LLM conversation loop, tool dispatch, abort handling |
 | Agent tools | `backend/agent/tools.py` | File I/O, bash, search, memory — all sandboxed to workspace |
 | Prompts | `backend/agent/prompts.py` | Phase-specific system prompts and allowed tool sets |
 | Ollama adapter | `backend/agent/adapters/ollama.py` | OpenAI-compatible API adapter for local Ollama |
 | Anthropic adapter | `backend/agent/adapters/anthropic.py` | Anthropic Claude API adapter |
+| Claude Code adapter | `backend/agent/adapters/claude_code.py` | Claude Code CLI adapter |
+| Cursor adapter | `backend/agent/adapters/cursor.py` | Cursor editor adapter |
 | Memory client | `backend/memory.py` | Async wrapper around `memory-core`; falls back to JSON |
 | Electron shell | `electron/main.js` | Desktop app lifecycle, spawns uvicorn |
+
+For a deeper dive into the architecture, see [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -162,13 +171,16 @@ Open **Settings** in the UI (keyboard shortcut: `s`) or `PUT /settings` to confi
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `workspace` | `""` | Default workspace directory for new tasks |
-| `default_model` | `ollama/qwen2.5-coder:32b` | Default model for the build phase |
+| `default_model` | `ollama/qwen2.5-coder:latest` | Default model for the build phase |
 | `default_plan_model` | _(uses default_model)_ | Model used for the plan phase |
 | `default_qa_model` | _(uses default_model)_ | Model used for the QA phase |
 | `max_concurrent_tasks` | `3` | Max tasks running in parallel |
+| `max_concurrent_builders` | `3` | Max parallel builder agents per batch within a task |
 | `anthropic_api_key` | _(empty)_ | API key for Anthropic Claude models |
 | `ollama_host` | `http://localhost:11434` | URL of your Ollama server |
+| `mcp_server_host` | `http://localhost:8080` | MCP server endpoint (for claude-code adapter) |
 | `require_bash_approval` | `false` | Pause and ask before each shell command |
+| `capture_test_baseline` | `true` | Run tests before build to capture a regression baseline |
 | `theme` | `dark` | UI theme (`dark` or `light`) |
 | `memory_model` | `llama3.2` | Ollama model used for memory embeddings |
 
@@ -177,10 +189,12 @@ Open **Settings** in the UI (keyboard shortcut: `s`) or `PUT /settings` to confi
 Models are specified as `provider/model-name`. If no provider prefix is given, Ollama is assumed.
 
 ```
-ollama/qwen2.5-coder:32b     # local Ollama
+ollama/qwen2.5-coder:latest  # local Ollama
 ollama/llama3.1:70b
 anthropic/claude-opus-4-6    # Anthropic cloud
 anthropic/claude-sonnet-4-6
+claude-code/claude-sonnet-4-6  # Claude Code CLI
+cursor-code/gpt-4o             # Cursor editor
 ```
 
 Per-task overrides for plan and QA phases let you use a cheaper/faster model for those phases while using a more capable model for building.
@@ -196,12 +210,12 @@ Per-task overrides for plan and QA phases let you use a cheaper/faster model for
    - **Title** — short name for the task
    - **Description** — what the agent should do (be specific)
    - **Workspace** — absolute path to the directory the agent will work in
-   - **Model** — build-phase model (e.g. `ollama/qwen2.5-coder:32b`)
+   - **Model** — build-phase model (e.g. `ollama/qwen2.5-coder:latest`)
    - **Plan model** / **QA model** — optional per-phase overrides
    - **Max retries** — how many build→QA cycles before giving up (default 3)
    - **Spec file** — optional path to a spec/requirements file to inject into prompts
    - **Dependencies** — other tasks that must complete before this one starts
-   - **Mode** — `autonomous` (auto-complete) or `supervised` (stops at Review for approval)
+   - **Mode** — `autonomous` (auto-complete) or `supervised` (requires plan approval and manual sign-off after QA)
 3. Click **Save**.
 4. Click **Start Pipeline** on the task board to begin execution.
 5. Click any task card to open the **Run View** and watch the live output stream.
@@ -218,36 +232,84 @@ Per-task overrides for plan and QA phases let you use a cheaper/faster model for
 
 ---
 
-## The Plan → Build → QA Pipeline
+## The Pipeline
 
-Every task runs through three phases executed by separate agent invocations:
+Every task runs through five phases executed by separate agent invocations. See [docs/architecture.md](docs/architecture.md) for a detailed breakdown.
 
 ### 1. Plan
 
-The planning agent reads the codebase (read-only) and produces a detailed implementation plan. It has access to:
-- `read_file`, `list_files`, `search_files` — explore the workspace
-- `search_memory` — consult past work
+The planning agent performs a **two-pass analysis**:
 
-The plan artifact is passed to the build phase as context. If planning fails, the task fails immediately (no retries).
+- **Pass 1** — deep codebase exploration: reads files, traces imports, catalogs patterns, identifies high-risk files, and stores findings to memory.
+- **Pass 2** — produces a structured, phased build plan with enriched per-task specs (interface contracts, preserve lists, test strategies, pattern references).
 
-### 2. Build
+The plan artifact is passed to subsequent phases. If planning fails, the task fails immediately (no retries).
 
-The build agent executes the plan. It has access to all tools including `write_file` and `run_bash`. On retry attempts, the previous QA feedback is injected into the system prompt so the agent knows what to fix.
+### 2. Validate
 
-### 3. QA
+The plan validator checks the plan for internal consistency before any code is written:
 
-The QA agent reviews the implementation against the plan and task requirements. It is read-only (`read_file`, `list_files`, `search_files`). Its output must begin with `VERDICT: PASS` for the task to succeed.
+- Dependency graph: all `depends_on` entries reference files that will exist by that phase
+- Interface contract alignment: every `consumes` has a matching `produces` with compatible signatures
+- Completeness: every requirement from the spec maps to at least one task
+- File conflicts: no two tasks in the same phase modify the same file
+- Preservation consistency: no task spec contradicts a `preserve` entry in another task
+
+If validation fails (any issue found), the task fails without proceeding to build.
+
+**In supervised mode**, the plan is presented to the user for approval after validation passes. The pipeline waits up to 10 minutes for a response via `POST /runs/{id}/plan/approve`.
+
+### 3. Build
+
+Builder agents execute the plan in **batches**. Tasks within the same plan phase run in parallel (up to `max_concurrent_builders` agents at once). Each builder receives:
+
+- Its specific task spec (with interface contracts, preserve list, pattern references)
+- The full architecture snapshot stored by the planner
+- QA feedback from the previous attempt, if this is a retry
+
+All file tools including `write_file` and `run_bash` are available. Builders must call `write_file` for every file they change.
+
+### 4. Review
+
+After each build batch completes, a **reviewer agent** checks the batch's output for correctness:
+
+- Import validation: every local import resolves to an existing name
+- Interface boundary check: imported names still exist with compatible signatures
+- Regression check: modified files haven't broken callers; `preserve` lists are intact
+- Spec compliance: required functions/classes exist with the right signatures
+- Interface contract validation: every `produces` and `consumes` entry is satisfied
+- Cross-file consistency: shared types and naming are consistent across the batch
+
+If the reviewer finds issues (`VERDICT: FAIL`), the feedback is injected into the next build retry along with any QA feedback.
+
+### 5. QA
+
+The QA agent verifies the complete implementation against the plan and task requirements:
+
+1. Confirms files were actually changed (`git diff --stat HEAD`)
+2. Runs the project's test suite
+3. Compares results against the pre-build baseline to distinguish regressions from pre-existing failures
+4. Checks import validity for all new modules
+5. Audits completeness against the plan
+
+The QA agent's output must begin with `VERDICT: PASS` for the task to succeed.
 
 ### Retry loop
 
 ```
+if capture_test_baseline: run tests to capture pre-build baseline
+
 for attempt = 1 to max_retries:
-    run build phase  (with previous QA feedback if attempt > 1)
+    run build phase in batches
+    for each batch:
+        run build agents in parallel
+        run reviewer agent
+        if reviewer FAIL: record feedback
     run QA phase
     if QA output starts with "VERDICT: PASS":
         task succeeds
     else:
-        save QA feedback, continue
+        save QA feedback (+ reviewer feedback), continue
 
 if all retries exhausted → task fails
 ```
@@ -276,19 +338,19 @@ All file system tools are sandboxed to the task's workspace directory. Attempts 
 
 | Tool | Phases | Description |
 |------|--------|-------------|
-| `read_file` | plan, build, QA | Read a file relative to the workspace root |
+| `read_file` | plan, build, review, QA | Read a file relative to the workspace root |
 | `write_file` | build | Write/overwrite a file; returns a unified diff |
-| `list_files` | plan, build, QA | List files in a directory; respects `.gitignore` via `git ls-files` |
-| `run_bash` | build | Run a shell command in the workspace (30s timeout) |
-| `search_files` | plan, build, QA | Regex search across all files (uses `rg` or `grep`) |
-| `search_memory` | plan, build | Retrieve relevant context from previous runs |
-| `store_memory` | build | Persist information for future runs |
+| `list_files` | plan, build, review, QA | List files in a directory; respects `.gitignore` via `git ls-files` |
+| `run_bash` | build, QA | Run a shell command in the workspace (30s timeout) |
+| `search_files` | plan, validate, build, review, QA | Regex search across all files (uses `rg` or `grep`) |
+| `search_memory` | plan, validate, build, review, QA | Retrieve relevant context from previous runs |
+| `store_memory` | plan, build, QA | Persist information for future runs |
 
 ---
 
 ## Memory System
 
-Forge maintains a persistent memory store. After each successful run, the build summary is stored with metadata (task title, run ID, task ID). Future agents can call `search_memory` to retrieve relevant past context.
+Forge maintains a persistent memory store. After each successful run, the build summary is stored with metadata (task title, run ID, task ID). The planner also stores its codebase analysis and architecture snapshot during Pass 1/2. Future agents can call `search_memory` to retrieve relevant past context.
 
 The memory backend uses `memory-core` when available. If it is not installed or fails to initialize, Forge falls back to a local JSON file.
 
@@ -306,7 +368,10 @@ This is useful when you want the agent to be able to run tests and build tools b
 
 ## Supervised Mode
 
-Set a task's mode to `supervised` to require a human sign-off before it is marked complete. After QA passes, the task moves to `review` status instead of `done`. The scheduler will not start dependent tasks until you manually approve the task.
+Set a task's mode to `supervised` for two additional checkpoints:
+
+1. **Plan approval** — after the plan passes validation, execution pauses and a `plan_approval_request` event is emitted. You approve or deny via `POST /runs/{id}/plan/approve`. Timeout is 10 minutes.
+2. **Post-QA sign-off** — after QA passes, the task moves to `review` status instead of `done`. The scheduler will not start dependent tasks until you manually approve the task.
 
 ---
 
@@ -320,19 +385,21 @@ The backend exposes a REST API at `http://localhost:8000`. Interactive docs are 
 |--------|----------|-------------|
 | `GET` | `/tasks` | List all tasks |
 | `POST` | `/tasks` | Create a task |
-| `GET` | `/tasks/{id}` | Get a task |
-| `PATCH` | `/tasks/{id}` | Update a task |
-| `DELETE` | `/tasks/{id}` | Delete a task |
+| `PUT` | `/tasks/{id}` | Update a task |
+| `DELETE` | `/tasks/{id}` | Delete a task and its runs |
 | `POST` | `/tasks/reorder` | Reorder tasks (accepts `{task_ids: [...]}`) |
+| `POST` | `/tasks/{id}/run` | Manually trigger a run for a specific task |
 
 ### Runs
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/runs` | List all runs |
+| `GET` | `/runs` | List all runs (optional `?task_id=` filter) |
 | `GET` | `/runs/{id}` | Get a run with its phases and events |
+| `GET` | `/runs/{id}/phases` | Get the phase records for a run |
 | `POST` | `/runs/{id}/abort` | Abort a running task |
-| `POST` | `/runs/{id}/approve-bash` | Approve a pending bash command (`{approved: true/false}`) |
+| `POST` | `/runs/{id}/bash/approve` | Approve a pending bash command (`{approved: true/false}`) |
+| `POST` | `/runs/{id}/plan/approve` | Approve or deny a pending plan (`{approved: true/false}`) |
 
 ### Pipeline
 
@@ -347,9 +414,10 @@ The backend exposes a REST API at `http://localhost:8000`. Interactive docs are 
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/memory` | List all memory entries |
-| `GET` | `/memory/search?q=...` | Search memory by query |
-| `DELETE` | `/memory/{id}` | Delete a memory entry |
+| `GET` | `/memory/list` | List all memory entries (optional `?project_id=`) |
+| `GET` | `/memory/search?q=...` | Search memory by query (optional `?project_id=`) |
+| `GET` | `/memory/projects` | List available memory projects |
+| `DELETE` | `/memory/{id}` | Delete a memory entry (optional `?project_id=`) |
 
 ### Settings
 
@@ -357,6 +425,12 @@ The backend exposes a REST API at `http://localhost:8000`. Interactive docs are 
 |--------|----------|-------------|
 | `GET` | `/settings` | Get current settings |
 | `PUT` | `/settings` | Update settings |
+
+### Templates
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/templates?path=...` | List `.md` template files in a directory |
 
 ---
 
@@ -375,8 +449,10 @@ Each message is a JSON object with a `type` field:
 | `tool_result` | `{name, output}` | Tool returned a result |
 | `file_change` | `{path, diff}` | A file was written (includes unified diff) |
 | `bash_approval_request` | `{command}` | Agent is waiting for bash approval |
+| `plan_approval_request` | `{plan_summary}` | Supervised mode: plan is waiting for approval |
 | `error` | `{content}` | An error occurred |
 | `done` | `{status}` | Run finished; `status` is `completed`, `failed`, `aborted`, or `review` |
+| `ping` | _(none)_ | Keepalive heartbeat (sent every 30s if idle) |
 
 All events are also persisted to the `RunEvent` table in SQLite, so you can replay them after the fact via `GET /runs/{id}`.
 
@@ -387,8 +463,8 @@ All events are also persisted to the `RunEvent` table in SQLite, so you can repl
 Forge uses SQLite. The schema has four tables:
 
 - **`task`** — task definitions (title, description, model, workspace, status, dependencies, etc.)
-- **`run`** — one row per execution attempt (status, current phase, summary, error)
-- **`runphase`** — one row per phase per attempt (plan/build/QA status, artifact text)
+- **`run`** — one row per execution attempt (status, current phase, summary, error, test_baseline, architecture_snapshot, build_id)
+- **`runphase`** — one row per phase per attempt, per batch/task-index (plan/validate/build/review/QA status, artifact text)
 - **`runevent`** — append-only log of every event emitted during a run
 
 Settings are stored as JSON in `forge_settings.json` alongside the database.
@@ -397,9 +473,11 @@ Settings are stored as JSON in `forge_settings.json` alongside the database.
 
 ```
 pending → planning → building → qa → done
-                              ↘ review  (supervised mode)
+                              ↘ review  (supervised mode, awaiting sign-off)
          (any phase) → failed
 ```
+
+The run's `current_phase` field tracks the active pipeline phase within a run: `plan`, `validate`, `build`, `review`, or `qa`.
 
 ---
 
@@ -439,6 +517,12 @@ python test_run.py
 
 `test_run.py` creates a task, starts a run, streams the WebSocket output, and prints the final result.
 
+### Unit tests
+
+```bash
+pytest
+```
+
 ### Project structure
 
 ```
@@ -447,7 +531,7 @@ forge/
 │   ├── main.py           # FastAPI app + all endpoints
 │   ├── models.py         # ORM tables + Pydantic schemas
 │   ├── database.py       # SQLite engine + settings helpers
-│   ├── orchestrator.py   # Plan→Build→QA pipeline execution
+│   ├── orchestrator.py   # Plan→Validate→Build→Review→QA pipeline
 │   ├── scheduler.py      # DAG scheduling + cycle detection
 │   ├── memory.py         # memory-core client wrapper
 │   └── agent/
@@ -457,7 +541,9 @@ forge/
 │       └── adapters/
 │           ├── base.py       # Abstract ModelAdapter
 │           ├── ollama.py     # Ollama (OpenAI-compatible) adapter
-│           └── anthropic.py  # Anthropic Claude adapter
+│           ├── anthropic.py  # Anthropic Claude adapter
+│           ├── claude_code.py  # Claude Code CLI adapter
+│           └── cursor.py     # Cursor editor adapter
 ├── frontend/
 │   └── src/
 │       ├── App.jsx           # Router + keyboard shortcuts
@@ -467,7 +553,7 @@ forge/
 │       │   └── useWebSocket.js
 │       └── components/
 │           ├── TaskBoard.jsx       # Kanban board + pipeline controls
-│           ├── RunView.jsx         # Live event stream + bash approval
+│           ├── RunView.jsx         # Live event stream + approval UIs
 │           ├── TaskEditor.jsx      # Create/edit task form
 │           ├── MemoryBrowser.jsx   # Search/delete memories
 │           ├── DependencyGraph.jsx # DAG visualization
@@ -475,6 +561,8 @@ forge/
 ├── electron/
 │   ├── main.js       # Electron app lifecycle
 │   └── preload.js    # Context isolation preload
+├── docs/
+│   └── architecture.md  # Detailed architecture reference
 ├── requirements.txt
 ├── package.json
 └── test_run.py
