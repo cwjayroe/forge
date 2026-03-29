@@ -581,6 +581,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             session.add(run_event)
             session.commit()
         await _broadcast(run_id, event)
+        from .webhooks import send_webhook_notifications
+        await send_webhook_notifications(event, task.title, run_id, settings)
 
     # ---------------------------------------------------------------
     # Claude Code path: single pass via /feature-plan-and-build skill

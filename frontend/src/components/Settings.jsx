@@ -13,6 +13,12 @@ const DEFAULTS = {
   require_bash_approval: false,
   theme: 'dark',
   memory_model: 'llama3.2',
+  slack_webhook_url: '',
+  discord_webhook_url: '',
+  generic_webhook_url: '',
+  notify_on_complete: true,
+  notify_on_failure: true,
+  notify_on_approval: false,
 }
 
 export default function Settings() {
@@ -177,6 +183,61 @@ export default function Settings() {
           </div>
         </Field>
 
+        {/* Notifications */}
+        <div className="pt-2 border-t border-gray-700">
+          <p className="text-xs text-gray-500 uppercase tracking-wider mb-4">Notifications</p>
+
+          <div className="space-y-4">
+            <Field label="Slack webhook URL">
+              <input
+                className={input}
+                value={form.slack_webhook_url || ''}
+                onChange={(e) => set('slack_webhook_url', e.target.value)}
+                placeholder="https://hooks.slack.com/services/..."
+              />
+            </Field>
+
+            <Field label="Discord webhook URL">
+              <input
+                className={input}
+                value={form.discord_webhook_url || ''}
+                onChange={(e) => set('discord_webhook_url', e.target.value)}
+                placeholder="https://discord.com/api/webhooks/..."
+              />
+            </Field>
+
+            <Field label="Generic webhook URL">
+              <input
+                className={input}
+                value={form.generic_webhook_url || ''}
+                onChange={(e) => set('generic_webhook_url', e.target.value)}
+                placeholder="https://your-server/webhook"
+              />
+            </Field>
+
+            <Field label="Notify on task complete">
+              <Toggle
+                value={form.notify_on_complete}
+                onChange={(v) => set('notify_on_complete', v)}
+              />
+            </Field>
+
+            <Field label="Notify on task failure">
+              <Toggle
+                value={form.notify_on_failure}
+                onChange={(v) => set('notify_on_failure', v)}
+              />
+            </Field>
+
+            <Field label="Notify when approval needed">
+              <Toggle
+                value={form.notify_on_approval}
+                onChange={(v) => set('notify_on_approval', v)}
+              />
+            </Field>
+          </div>
+        </div>
+
         {error && <p className="text-red-400 text-sm">{error}</p>}
 
         <div className="flex items-center gap-3 pt-2">
@@ -200,6 +261,24 @@ function Field({ label, children }) {
       <label className="block text-sm text-gray-400 mb-1.5">{label}</label>
       {children}
     </div>
+  )
+}
+
+function Toggle({ value, onChange }) {
+  return (
+    <label className="flex items-center gap-3 cursor-pointer">
+      <div
+        onClick={() => onChange(!value)}
+        className={`relative w-10 h-5 rounded-full transition-colors ${
+          value ? 'bg-orange-500' : 'bg-gray-600'
+        }`}
+      >
+        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+          value ? 'translate-x-5' : 'translate-x-0.5'
+        }`} />
+      </div>
+      <span className="text-sm text-gray-300">{value ? 'Enabled' : 'Disabled'}</span>
+    </label>
   )
 }
 

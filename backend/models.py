@@ -122,3 +122,9 @@ class Settings(BaseModel):
     capture_test_baseline: bool = True        # run tests before build to capture baseline
     theme: str = "dark"
     memory_model: str = "llama3.2"
+    slack_webhook_url: Optional[str] = None
+    discord_webhook_url: Optional[str] = None
+    generic_webhook_url: Optional[str] = None
+    notify_on_complete: bool = True
+    notify_on_failure: bool = True
+    notify_on_approval: bool = False
