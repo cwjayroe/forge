@@ -190,9 +190,16 @@ export default function RunView() {
         </button>
         <div className="flex-1 min-w-0">
           <h1 className="font-semibold truncate">{task?.title || 'Run'}</h1>
-          <p className="text-xs text-gray-500 truncate">
-            {run?.id} · started {new Date(run?.started_at).toLocaleTimeString()}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-xs text-gray-500 truncate">
+              {run?.id} · started {new Date(run?.started_at).toLocaleTimeString()}
+            </p>
+            {run?.branch_name && (
+              <span className="text-xs font-mono text-green-400 bg-green-900/20 px-1.5 py-0.5 rounded shrink-0">
+                {run.branch_name}
+              </span>
+            )}
+          </div>
         </div>
         <StatusBadge status={run?.status} />
       </div>
