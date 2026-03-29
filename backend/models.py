@@ -31,6 +31,7 @@ class Task(SQLModel, table=True):
     max_retries: int = 3                               # max build→QA retry cycles
     workspace: str
     order: int = 0
+    branch_name: Optional[str] = None                 # git branch created for this task
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -47,6 +48,7 @@ class Run(SQLModel, table=True):
     error: Optional[str] = None
     test_baseline: Optional[str] = None  # pre-build test results for QA regression attribution
     architecture_snapshot: Optional[str] = None  # stored by planner, used by builders/reviewers
+    branch_name: Optional[str] = None  # git branch created for this run
 
 
 class RunPhase(SQLModel, table=True):

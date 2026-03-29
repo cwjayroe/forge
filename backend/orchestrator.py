@@ -120,6 +120,56 @@ def _verify_build_changed(workspace: str) -> bool:
         return True  # Can't verify — assume OK to avoid false failures
 
 
+async def _create_task_branch(task_id: str, task_title: str, workspace: str) -> Optional[str]:
+    """Create and checkout a git branch for this task. Returns branch name or None."""
+    slug = re.sub(r"[^a-z0-9]+", "-", task_title.lower()).strip("-")[:40]
+    branch_name = f"forge/task-{task_id[:8]}-{slug}"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "checkout", "-b", branch_name,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode == 0:
+            return branch_name
+        # Branch may already exist — try checking it out
+        proc = await asyncio.create_subprocess_exec(
+            "git", "checkout", branch_name,
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        if proc.returncode == 0:
+            return branch_name
+    except Exception:
+        pass
+    return None
+
+
+async def _commit_task_changes(task_title: str, workspace: str) -> None:
+    """Stage and commit all changes made during a task run. Non-fatal if nothing to commit."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "add", "-A",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+        proc = await asyncio.create_subprocess_exec(
+            "git", "commit", "-m", f"forge: {task_title}",
+            cwd=workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+    except Exception:
+        pass
+
+
 def _is_claude_code(model_str: str) -> bool:
     """Check if the model string uses the claude-code CLI provider."""
     return (model_str or "").startswith("claude-code/")
@@ -472,6 +522,21 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             session.add(run)
             session.commit()
 
+    # Create an isolated git branch for this task
+    branch_name = await _create_task_branch(task.id, task.title, task.workspace)
+    if branch_name:
+        with Session(engine) as session:
+            run = session.get(Run, run_id)
+            if run:
+                run.branch_name = branch_name
+                session.add(run)
+            db_task = session.get(Task, task.id)
+            if db_task:
+                db_task.branch_name = branch_name
+                session.add(db_task)
+            session.commit()
+        await _broadcast(run_id, {"type": "branch_created", "branch": branch_name})
+
     # Load spec content
     spec_content = None
     if task.spec_path:
@@ -586,6 +651,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
 
         # Finalize run
         final_status = "completed" if status == "completed" else "failed"
+        if final_status == "completed" and branch_name:
+            await _commit_task_changes(task.title, task.workspace)
         with Session(engine) as session:
             run = session.get(Run, run_id)
             if run:
@@ -686,6 +753,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
 
         # Finalize run
         final_status = "completed" if status == "completed" else "failed"
+        if final_status == "completed" and branch_name:
+            await _commit_task_changes(task.title, task.workspace)
         with Session(engine) as session:
             run = session.get(Run, run_id)
             if run:
@@ -1288,6 +1357,10 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
         final_status = "failed"
         error_msg = str(e)
         await on_event({"type": "error", "content": error_msg})
+
+    # Auto-commit changes on the task branch when the task succeeds or goes to review
+    if final_status in ("completed", "review") and branch_name:
+        await _commit_task_changes(task.title, task.workspace)
 
     # Update Run record
     with Session(engine) as session:
