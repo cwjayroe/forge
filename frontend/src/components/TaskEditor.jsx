@@ -6,6 +6,9 @@ const MODEL_OPTIONS = [
   'claude-code/sonnet',
   'claude-code/opus',
   'claude-code/haiku',
+  'cursor-code/claude-3-5-sonnet',
+  'cursor-code/gpt-4o',
+  'cursor-code/cursor-small',
   'ollama/qwen2.5-coder:latest',
   'ollama/llama3.1:8b',
   'ollama/codellama:13b',
@@ -280,10 +283,10 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
             </Field>
           </div>
 
-          {form.model.startsWith('claude-code/') ? (
+          {form.model.startsWith('claude-code/') || form.model.startsWith('cursor-code/') ? (
             <div className="border border-gray-700 rounded p-3">
               <p className="text-xs text-gray-500">
-                Claude Code handles planning, building, and QA via the <span className="text-gray-300">/feature-plan-and-build</span> skill — no per-phase model config needed.
+                {form.model.startsWith('cursor-code/') ? 'Cursor' : 'Claude Code'} handles planning, building, and QA via the <span className="text-gray-300">/feature-plan-and-build</span> skill — no per-phase model config needed.
               </p>
             </div>
           ) : (

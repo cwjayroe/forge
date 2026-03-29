@@ -130,6 +130,16 @@ def _get_claude_code_model(model_str: str) -> str:
     return model_str.split("/", 1)[1]
 
 
+def _is_cursor(model_str: str) -> bool:
+    """Check if the model string uses the cursor-code CLI provider."""
+    return (model_str or "").startswith("cursor-code/")
+
+
+def _get_cursor_model(model_str: str) -> str:
+    """Extract model name from a cursor-code/model string."""
+    return model_str.split("/", 1)[1]
+
+
 def _make_adapter(model_str: str):
     """Build the appropriate model adapter from a model string (provider/model-name)."""
     model_str = model_str or "ollama/qwen2.5-coder:latest"
@@ -550,6 +560,106 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
 
         try:
             status, artifact = await run_claude_code_task(
+                run_id=run_id,
+                model_name=model_name,
+                workspace=task.workspace,
+                task_description=full_description,
+                on_event=on_event,
+            )
+        except Exception as e:
+            status = "failed"
+            artifact = str(e)
+            await on_event({"type": "error", "content": artifact})
+
+        # Update RunPhase record
+        with Session(engine) as session:
+            rp = session.get(RunPhase, phase_id)
+            if rp:
+                rp.status = "completed" if status == "completed" else "failed"
+                rp.completed_at = datetime.utcnow()
+                rp.artifact = artifact if status == "completed" else None
+                rp.error = artifact if status == "failed" else None
+                session.add(rp)
+                session.commit()
+
+        await on_event({"type": "phase_end", "phase": "build", "attempt": 1, "status": status})
+
+        # Finalize run
+        final_status = "completed" if status == "completed" else "failed"
+        with Session(engine) as session:
+            run = session.get(Run, run_id)
+            if run:
+                run.status = final_status
+                run.current_phase = None
+                run.completed_at = datetime.utcnow()
+                run.summary = artifact if status == "completed" else None
+                run.error = artifact if status == "failed" else None
+                session.add(run)
+
+            db_task = session.get(Task, task.id)
+            if db_task:
+                db_task.status = "done" if final_status == "completed" else "failed"
+                db_task.updated_at = datetime.utcnow()
+                session.add(db_task)
+
+            session.commit()
+
+        await _broadcast(run_id, {"type": "done", "status": final_status})
+        active_agents.pop(run_id, None)
+        active_runs.pop(run_id, None)
+
+        if final_status == "completed":
+            try:
+                from .scheduler import check_ready_tasks
+                await check_ready_tasks(engine)
+            except Exception:
+                pass
+
+        return  # Skip the multi-phase pipeline below
+
+    # ---------------------------------------------------------------
+    # Cursor CLI path: single pass via /feature-plan-and-build skill
+    # ---------------------------------------------------------------
+    if _is_cursor(task.model):
+        from .agent.adapters.cursor import run_cursor_task
+
+        model_name = _get_cursor_model(task.model)
+
+        # Build the full task description, including spec if available
+        full_description = task.description
+        if spec_content:
+            full_description += f"\n\n## Spec / PRD\n{spec_content}"
+
+        with Session(engine) as session:
+            db_task = session.get(Task, task.id)
+            if db_task:
+                db_task.status = "building"
+                db_task.updated_at = datetime.utcnow()
+                session.add(db_task)
+                session.commit()
+
+        # Create RunPhase record so the frontend can track progress
+        phase_id = None
+        with Session(engine) as session:
+            run_phase = RunPhase(
+                run_id=run_id,
+                phase="build",
+                attempt=1,
+                status="running",
+            )
+            session.add(run_phase)
+            run = session.get(Run, run_id)
+            if run:
+                run.current_phase = "build"
+                session.add(run)
+            session.commit()
+            session.refresh(run_phase)
+            phase_id = run_phase.id
+
+        await on_event({"type": "phase_start", "phase": "build", "attempt": 1})
+
+        try:
+            status, artifact = await run_cursor_task(
                 run_id=run_id,
                 model_name=model_name,
                 workspace=task.workspace,
@@ -1273,9 +1383,11 @@ async def abort_run(run_id: str) -> bool:
     if agent:
         agent.abort()
 
-    # Also terminate any claude-code subprocess
+    # Also terminate any claude-code or cursor subprocess
     from .agent.adapters.claude_code import abort_claude_code
     abort_claude_code(run_id)
+    from .agent.adapters.cursor import abort_cursor
+    abort_cursor(run_id)
 
     task_handle = active_runs.get(run_id)
     if task_handle and not task_handle.done():
