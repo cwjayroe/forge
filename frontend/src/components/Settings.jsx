@@ -19,6 +19,10 @@ const DEFAULTS = {
   notify_on_complete: true,
   notify_on_failure: true,
   notify_on_approval: false,
+  schedule_enabled: false,
+  schedule_window_start: '22:00',
+  schedule_window_end: '06:00',
+  schedule_days: '0,1,2,3,4,5,6',
 }
 
 export default function Settings() {
@@ -235,6 +239,76 @@ export default function Settings() {
                 onChange={(v) => set('notify_on_approval', v)}
               />
             </Field>
+          </div>
+        </div>
+
+        {/* Execution Schedule */}
+        <div className="pt-2 border-t border-gray-700">
+          <p className="text-xs text-gray-500 uppercase tracking-wider mb-4">Execution Schedule</p>
+
+          <div className="space-y-4">
+            <Field label="Enable execution windows">
+              <Toggle
+                value={form.schedule_enabled}
+                onChange={(v) => set('schedule_enabled', v)}
+              />
+            </Field>
+
+            {form.schedule_enabled && (
+              <>
+                <div className="flex gap-4">
+                  <Field label="Start time">
+                    <input
+                      type="time"
+                      className={`${input} w-36`}
+                      value={form.schedule_window_start}
+                      onChange={(e) => set('schedule_window_start', e.target.value)}
+                    />
+                  </Field>
+                  <Field label="End time">
+                    <input
+                      type="time"
+                      className={`${input} w-36`}
+                      value={form.schedule_window_end}
+                      onChange={(e) => set('schedule_window_end', e.target.value)}
+                    />
+                  </Field>
+                </div>
+
+                <Field label="Days">
+                  <div className="flex gap-2 flex-wrap">
+                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => {
+                      const activeDays = (form.schedule_days || '').split(',').map(Number).filter(d => !isNaN(d))
+                      const active = activeDays.includes(i)
+                      const toggleDay = () => {
+                        const next = active
+                          ? activeDays.filter((d) => d !== i)
+                          : [...activeDays, i].sort((a, b) => a - b)
+                        set('schedule_days', next.join(','))
+                      }
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={toggleDay}
+                          className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                            active
+                              ? 'bg-orange-500 text-white'
+                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </Field>
+
+                <p className="text-xs text-gray-500">
+                  Pipeline only runs during the configured window (server local time). Tasks already running finish normally.
+                </p>
+              </>
+            )}
           </div>
         </div>
 

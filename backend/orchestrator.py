@@ -58,8 +58,9 @@ _bash_results: dict[str, bool] = {}
 _plan_approvals: dict[str, asyncio.Event] = {}
 _plan_results: dict[str, bool] = {}
 
-# Pipeline pause flag
-_pipeline_paused = False
+# Pipeline pause flags
+_pipeline_paused = False          # set by manual pause/resume
+_pipeline_paused_by_window = False  # set by schedule window checker
 
 
 # ---------------------------------------------------------------------------
@@ -1477,4 +1478,13 @@ def set_pipeline_paused(paused: bool) -> None:
 
 
 def is_pipeline_paused() -> bool:
-    return _pipeline_paused
+    return _pipeline_paused or _pipeline_paused_by_window
+
+
+def set_window_paused(paused: bool) -> None:
+    global _pipeline_paused_by_window
+    _pipeline_paused_by_window = paused
+
+
+def is_window_paused() -> bool:
+    return _pipeline_paused_by_window

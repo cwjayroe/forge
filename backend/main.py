@@ -26,8 +26,8 @@ from .models import (
     TaskReorder,
     TaskUpdate,
 )
-from .orchestrator import abort_run, deregister_ws_listener, register_ws_listener, resolve_bash_approval, resolve_plan_approval, start_run
-from .scheduler import get_pipeline_status, pause_pipeline, start_pipeline, validate_dependencies
+from .orchestrator import abort_run, deregister_ws_listener, is_pipeline_paused, is_window_paused, register_ws_listener, resolve_bash_approval, resolve_plan_approval, set_window_paused, start_run
+from .scheduler import check_ready_tasks, get_pipeline_status, pause_pipeline, start_pipeline, validate_dependencies
 
 app = FastAPI(title="Forge", version="0.1.0")
 
@@ -43,6 +43,52 @@ app.add_middleware(
 memory_client: MemoryClient = None  # type: ignore[assignment]
 
 
+def _is_in_window(settings: dict) -> bool:
+    """Return True if the current local time falls within the configured execution window."""
+    from datetime import datetime as dt
+    now = dt.now()
+    today_dow = now.weekday()  # 0=Mon, 6=Sun
+
+    allowed_days = [int(d) for d in settings.get("schedule_days", "0,1,2,3,4,5,6").split(",") if d.strip().isdigit()]
+    if allowed_days and today_dow not in allowed_days:
+        return False
+
+    try:
+        start_h, start_m = map(int, settings["schedule_window_start"].split(":"))
+        end_h, end_m = map(int, settings["schedule_window_end"].split(":"))
+    except (KeyError, ValueError):
+        return True  # Malformed config — don't block execution
+
+    start_minutes = start_h * 60 + start_m
+    end_minutes = end_h * 60 + end_m
+    now_minutes = now.hour * 60 + now.minute
+
+    if start_minutes < end_minutes:
+        # Same-day window e.g. 09:00–17:00
+        return start_minutes <= now_minutes < end_minutes
+    else:
+        # Overnight window e.g. 22:00–06:00
+        return now_minutes >= start_minutes or now_minutes < end_minutes
+
+
+async def _window_checker_loop() -> None:
+    """Background task: auto-pause/resume pipeline based on the configured schedule window."""
+    while True:
+        try:
+            settings = get_settings()
+            if settings.get("schedule_enabled", False):
+                in_window = _is_in_window(settings)
+                if not in_window and not is_window_paused():
+                    set_window_paused(True)
+                elif in_window and is_window_paused():
+                    set_window_paused(False)
+                    if not is_pipeline_paused():
+                        await check_ready_tasks(engine)
+        except Exception:
+            pass
+        await asyncio.sleep(60)
+
+
 @app.on_event("startup")
 async def on_startup():
     global memory_client
@@ -52,6 +98,7 @@ async def on_startup():
         ollama_host=s.get('ollama_host', 'http://localhost:11434'),
         memory_model=s.get('memory_model', 'llama3.2'),
     )
+    asyncio.create_task(_window_checker_loop())
 
 
 # ===========================================================================
