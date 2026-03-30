@@ -556,6 +556,13 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     capture_baseline = settings.get("capture_test_baseline", True)
     max_builders = settings.get("max_concurrent_builders", 3)
 
+    # Load skill (if any) for this task
+    from .models import Skill as _Skill
+    skill = None
+    if task.skill_id:
+        with Session(engine) as session:
+            skill = session.get(_Skill, task.skill_id)
+
     # Build approval gate for bash commands
     async def bash_gate(command: str) -> bool:
         event = asyncio.Event()
@@ -633,6 +640,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 workspace=task.workspace,
                 task_description=full_description,
                 on_event=on_event,
+                skill_slash_command=skill.claude_code_skill if skill and skill.claude_code_skill else None,
             )
         except Exception as e:
             status = "failed"
@@ -735,6 +743,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 workspace=task.workspace,
                 task_description=full_description,
                 on_event=on_event,
+                skill_slash_command=skill.cursor_skill if skill and skill.cursor_skill else None,
             )
         except Exception as e:
             status = "failed"
@@ -1044,6 +1053,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                     task_spec=phase.get("raw", ""),
                     architecture_snapshot=architecture_snapshot,
                 )
+                if skill and skill.prompt_addon:
+                    build_sys += f"\n\n{skill.prompt_addon}"
                 build_status, build_artifact = await _run_single_phase(
                     run_id=run_id,
                     phase_name="build",
@@ -1093,6 +1104,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         task_spec=task_spec_str,
                         architecture_snapshot=architecture_snapshot,
                     )
+                    if skill and skill.prompt_addon:
+                        b_sys += f"\n\n{skill.prompt_addon}"
                     desc = task_spec_dict.get("description", task.description)
                     return await _run_single_phase(
                         run_id=run_id,
@@ -1195,6 +1208,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                                 review_feedback=rev_artifact,
                                 architecture_snapshot=architecture_snapshot,
                             )
+                            if skill and skill.prompt_addon:
+                                retry_sys += f"\n\n{skill.prompt_addon}"
                             retry_status, retry_artifact = await _run_single_phase(
                                 run_id=run_id,
                                 phase_name="build",
@@ -1321,6 +1336,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         qa_feedback=qa_feedback,
                         architecture_snapshot=architecture_snapshot,
                     )
+                    if skill and skill.prompt_addon:
+                        fix_sys += f"\n\n{skill.prompt_addon}"
                     fix_status, fix_artifact = await _run_single_phase(
                         run_id=run_id,
                         phase_name="build",

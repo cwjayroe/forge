@@ -6,6 +6,7 @@ import DependencyGraph from './components/DependencyGraph'
 import MemoryBrowser from './components/MemoryBrowser'
 import RunView from './components/RunView'
 import Settings from './components/Settings'
+import SkillLibrary from './components/SkillLibrary'
 import TaskBoard from './components/TaskBoard'
 
 function NavBar() {
@@ -35,6 +36,7 @@ function NavBar() {
       <NavLink to="/" end className={linkClass}>Board</NavLink>
       <NavLink to="/memory" className={linkClass}>Memory</NavLink>
       <NavLink to="/graph" className={linkClass}>Graph</NavLink>
+      <NavLink to="/skills" className={linkClass}>Skills</NavLink>
       <NavLink to="/settings" className={linkClass}>Settings</NavLink>
       {pipeline && (
         <div className="flex items-center gap-2 text-xs">
@@ -50,7 +52,7 @@ function NavBar() {
         </div>
       )}
       <span className="ml-auto text-xs text-gray-600 hidden sm:block">
-        b·board &nbsp; m·memory &nbsp; g·graph &nbsp; s·settings &nbsp; n·new task
+        b·board &nbsp; m·memory &nbsp; g·graph &nbsp; k·skills &nbsp; s·settings &nbsp; n·new task
       </span>
     </nav>
   )
@@ -67,6 +69,7 @@ function KeyboardShortcuts() {
         case 'b': navigate('/'); break
         case 'm': navigate('/memory'); break
         case 'g': navigate('/graph'); break
+        case 'k': navigate('/skills'); break
         case 's': navigate('/settings'); break
         case 'n': window.dispatchEvent(new CustomEvent('forge:new-task')); break
       }
@@ -88,6 +91,7 @@ export default function App() {
           <Route path="/" element={<TaskBoard />} />
           <Route path="/memory" element={<MemoryBrowser />} />
           <Route path="/graph" element={<DependencyGraph />} />
+          <Route path="/skills" element={<SkillLibrary />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/runs/:runId" element={<RunView />} />
         </Routes>

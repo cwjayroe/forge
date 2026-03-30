@@ -21,6 +21,9 @@ from .models import (
     RunEvent,
     RunPhase,
     Settings,
+    Skill,
+    SkillCreate,
+    SkillUpdate,
     Task,
     TaskCreate,
     TaskReorder,
@@ -89,6 +92,83 @@ async def _window_checker_loop() -> None:
         await asyncio.sleep(60)
 
 
+_BUILTIN_SKILLS = [
+    {
+        "slug": "write-tests",
+        "name": "Write Tests",
+        "icon": "🧪",
+        "description": "Generate comprehensive test suites for existing code.",
+        "prompt_addon": (
+            "## Skill: Write Tests\n"
+            "Your sole job is writing tests. Do NOT modify production code unless a trivial "
+            "fix is strictly required for testability. Follow the project's existing test "
+            "framework, fixtures, and naming conventions. Cover edge cases, error paths, "
+            "and happy paths. Every new test must have a clear docstring."
+        ),
+        "template_description": "Write comprehensive tests for: ",
+        "is_builtin": True,
+    },
+    {
+        "slug": "security-audit",
+        "name": "Security Audit",
+        "icon": "🔒",
+        "description": "Identify security vulnerabilities and produce a structured finding report.",
+        "prompt_addon": (
+            "## Skill: Security Audit\n"
+            "Perform a security audit. Check for injection flaws, auth/authz gaps, insecure "
+            "data handling, dependency vulnerabilities, and secrets in code. Produce a "
+            "structured report with severity (Critical/High/Medium/Low), file:line, "
+            "description, and recommended fix for each finding. "
+            "Do NOT modify any files unless explicitly asked to remediate."
+        ),
+        "template_description": "Perform a security audit of: ",
+        "is_builtin": True,
+    },
+    {
+        "slug": "generate-docs",
+        "name": "Generate Docs",
+        "icon": "📝",
+        "description": "Write docstrings, README sections, and API documentation.",
+        "prompt_addon": (
+            "## Skill: Generate Docs\n"
+            "Your sole job is documentation. Write docstrings for all public functions, "
+            "classes, and modules using the project's existing doc style. "
+            "Do NOT change any logic, signatures, or behavior."
+        ),
+        "template_description": "Generate documentation for: ",
+        "is_builtin": True,
+    },
+    {
+        "slug": "fix-lint",
+        "name": "Fix Lint",
+        "icon": "✨",
+        "description": "Fix all linting errors and enforce code style.",
+        "prompt_addon": (
+            "## Skill: Fix Lint\n"
+            "Run the project's linter to discover all errors, then fix them. "
+            "Do NOT change any logic, rename variables for non-style reasons, or refactor. "
+            "Only touch lines flagged by the linter."
+        ),
+        "template_description": "Fix all linting issues in: ",
+        "is_builtin": True,
+    },
+    {
+        "slug": "refactor",
+        "name": "Refactor",
+        "icon": "♻️",
+        "description": "Improve code structure and readability without changing behavior.",
+        "prompt_addon": (
+            "## Skill: Refactor\n"
+            "CRITICAL: Do not change any external behavior, public API signatures, or test "
+            "outcomes. Focus on removing duplication, improving naming, and simplifying logic. "
+            "Run tests after every batch of changes to verify zero regressions."
+        ),
+        "template_description": "Refactor: ",
+        "is_builtin": True,
+    },
+]
+
+
 @app.on_event("startup")
 async def on_startup():
     global memory_client
@@ -98,7 +178,143 @@ async def on_startup():
         ollama_host=s.get('ollama_host', 'http://localhost:11434'),
         memory_model=s.get('memory_model', 'llama3.2'),
     )
+    # Seed built-in skills (idempotent by slug)
+    with Session(engine) as session:
+        for data in _BUILTIN_SKILLS:
+            if not session.exec(select(Skill).where(Skill.slug == data["slug"])).first():
+                session.add(Skill(**data))
+        session.commit()
     asyncio.create_task(_window_checker_loop())
+
+
+# ===========================================================================
+# Skills
+# ===========================================================================
+
+@app.get("/skills")
+def list_skills(session: Session = Depends(get_session)):
+    return session.exec(
+        select(Skill).order_by(Skill.is_builtin.desc(), Skill.name)
+    ).all()
+
+
+@app.post("/skills", status_code=201)
+def create_skill(payload: SkillCreate, session: Session = Depends(get_session)):
+    # Guard against duplicate slugs
+    existing = session.exec(select(Skill).where(Skill.slug == payload.slug)).first()
+    if existing:
+        raise HTTPException(400, f"Skill with slug '{payload.slug}' already exists")
+    skill = Skill(**payload.model_dump())
+    session.add(skill)
+    session.commit()
+    session.refresh(skill)
+    return skill
+
+
+@app.put("/skills/{skill_id}")
+def update_skill(skill_id: str, payload: SkillUpdate, session: Session = Depends(get_session)):
+    skill = session.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(skill, k, v)
+    session.add(skill)
+    session.commit()
+    session.refresh(skill)
+    return skill
+
+
+@app.delete("/skills/{skill_id}", status_code=204)
+def delete_skill(skill_id: str, session: Session = Depends(get_session)):
+    skill = session.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    if skill.is_builtin:
+        raise HTTPException(400, "Cannot delete built-in skills")
+    session.delete(skill)
+    session.commit()
+
+
+@app.get("/skills/discover")
+def discover_cli_skills(workspace: str = ""):
+    """
+    Scan standard locations for Claude Code skill/command files.
+    Returns list of {slug, name, description, slash_command, path}.
+    """
+    search_dirs = []
+    home = Path.home()
+    for sub in ("skills", "commands"):
+        search_dirs.append(home / ".claude" / sub)
+        if workspace:
+            ws = Path(workspace).expanduser().resolve()
+            search_dirs.append(ws / ".claude" / sub)
+
+    def parse_frontmatter(content: str, fallback_name: str):
+        name, description = fallback_name, ""
+        if content.startswith("---"):
+            for line in content.split("\n")[1:]:
+                if line.strip() == "---":
+                    break
+                if line.startswith("name:"):
+                    name = line.split(":", 1)[1].strip()
+                elif line.startswith("description:"):
+                    description = line.split(":", 1)[1].strip()
+        return name, description
+
+    results, seen = [], set()
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        # Subdirectory pattern: skills/name/SKILL.md
+        try:
+            subdirs = sorted(d.iterdir())
+        except OSError:
+            continue
+        for subdir in subdirs:
+            if not subdir.is_dir():
+                continue
+            skill_md = subdir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            slug = subdir.name
+            if slug in seen:
+                continue
+            try:
+                content = skill_md.read_text(encoding="utf-8", errors="replace")
+                name, desc = parse_frontmatter(content, slug)
+                seen.add(slug)
+                results.append({
+                    "slug": slug,
+                    "name": name,
+                    "description": desc,
+                    "slash_command": f"/{slug}",
+                    "path": str(skill_md),
+                })
+            except OSError:
+                continue
+        # Flat .md file pattern: commands/name.md
+        try:
+            md_files = sorted(d.glob("*.md"))
+        except OSError:
+            continue
+        for md_file in md_files:
+            slug = md_file.stem
+            if slug in seen:
+                continue
+            try:
+                content = md_file.read_text(encoding="utf-8", errors="replace")
+                name, desc = parse_frontmatter(content, slug)
+                seen.add(slug)
+                results.append({
+                    "slug": slug,
+                    "name": name,
+                    "description": desc,
+                    "slash_command": f"/{slug}",
+                    "path": str(md_file),
+                })
+            except OSError:
+                continue
+    return results
 
 
 # ===========================================================================

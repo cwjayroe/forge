@@ -17,6 +17,20 @@ def _now() -> datetime:
 # DB tables
 # ---------------------------------------------------------------------------
 
+class Skill(SQLModel, table=True):
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    name: str                              # "Write Tests"
+    slug: str                              # "write-tests" (unique, used for seeding)
+    icon: str = "🛠️"                       # emoji shown in UI
+    description: str = ""                 # user-facing one-liner
+    prompt_addon: Optional[str] = None    # appended to build system prompt (Ollama/Anthropic)
+    claude_code_skill: Optional[str] = None  # e.g. "/write-tests" — replaces /feature-plan-and-build
+    cursor_skill: Optional[str] = None        # same for Cursor CLI
+    template_description: Optional[str] = None  # pre-fills task description on select
+    is_builtin: bool = False
+    created_at: datetime = Field(default_factory=_now)
+
+
 class Task(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     title: str
@@ -32,6 +46,7 @@ class Task(SQLModel, table=True):
     workspace: str
     order: int = 0
     branch_name: Optional[str] = None                 # git branch created for this task
+    skill_id: Optional[str] = None                    # FK to Skill.id
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -88,6 +103,7 @@ class TaskCreate(BaseModel):
     max_retries: int = 3
     workspace: str
     depends_on: Optional[str] = None
+    skill_id: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):
@@ -102,6 +118,28 @@ class TaskUpdate(BaseModel):
     max_retries: Optional[int] = None
     workspace: Optional[str] = None
     depends_on: Optional[str] = None
+    skill_id: Optional[str] = None
+
+
+class SkillCreate(BaseModel):
+    name: str
+    slug: str
+    icon: str = "🛠️"
+    description: str = ""
+    prompt_addon: Optional[str] = None
+    claude_code_skill: Optional[str] = None
+    cursor_skill: Optional[str] = None
+    template_description: Optional[str] = None
+
+
+class SkillUpdate(BaseModel):
+    name: Optional[str] = None
+    icon: Optional[str] = None
+    description: Optional[str] = None
+    prompt_addon: Optional[str] = None
+    claude_code_skill: Optional[str] = None
+    cursor_skill: Optional[str] = None
+    template_description: Optional[str] = None
 
 
 class TaskReorder(BaseModel):

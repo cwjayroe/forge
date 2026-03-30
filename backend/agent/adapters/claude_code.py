@@ -110,6 +110,7 @@ async def run_claude_code_task(
     workspace: str,
     task_description: str,
     on_event: Optional[Callable] = None,
+    skill_slash_command: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     Execute a full task by shelling out to the `claude` CLI with the
@@ -135,8 +136,9 @@ async def run_claude_code_task(
     # Build the prompt: invoke the skill with the task description.
     # "autonomous" / "just build it" keywords tell the skill to skip the
     # interactive approval gate.
+    slash_cmd = skill_slash_command or "/feature-plan-and-build"
     prompt = (
-        f"/feature-plan-and-build autonomous\n\n"
+        f"{slash_cmd} autonomous\n\n"
         f"{task_description}"
     )
 
