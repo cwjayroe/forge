@@ -99,6 +99,15 @@ def _generate_build_id(title: str) -> str:
     return f"{slug}-{ts_hash}"
 
 
+def _is_valid_plan(plan_artifact: str) -> bool:
+    """Check if the plan artifact looks like a structured plan vs. garbage/empty."""
+    if not plan_artifact or len(plan_artifact.strip()) < 50:
+        return False
+    # Must contain at least one indicator of a structured plan
+    indicators = ["Phase", "task_type", "file_path", "create", "modify", "## ", "### ", "Step"]
+    return any(ind.lower() in plan_artifact.lower() for ind in indicators)
+
+
 def _verify_build_changed(workspace: str) -> bool:
     """Return True if the build modified at least one file in the workspace."""
     try:
@@ -802,43 +811,6 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     # Traditional multi-phase pipeline (ollama / anthropic)
     # ---------------------------------------------------------------
 
-    # Gather memory context
-    memory_results = await memory.search(task.description[:100])
-    memory_context = ""
-    if memory_results:
-        memory_context = json.dumps(memory_results, indent=2, default=str)
-
-    # Gather upstream context from completed dependencies
-    upstream_context = ""
-    if task.depends_on:
-        dep_ids = [d.strip() for d in task.depends_on.split(",") if d.strip()]
-        if dep_ids:
-            upstream_parts = []
-            with Session(engine) as session:
-                for dep_id in dep_ids:
-                    dep_task = session.get(Task, dep_id)
-                    if not dep_task:
-                        continue
-                    dep_runs = session.exec(
-                        select(Run)
-                        .where(Run.task_id == dep_id, Run.status == "completed")
-                        .order_by(Run.started_at.desc())
-                    ).all()
-                    if dep_runs:
-                        latest_run = dep_runs[0]
-                        plan_phases = session.exec(
-                            select(RunPhase)
-                            .where(RunPhase.run_id == latest_run.id, RunPhase.phase == "plan", RunPhase.status == "completed")
-                        ).all()
-                        plan_summary = plan_phases[-1].artifact if plan_phases else None
-                        upstream_parts.append(
-                            f"### Task: {dep_task.title}\n"
-                            f"Summary: {latest_run.summary or 'N/A'}\n"
-                            f"Plan: {plan_summary or 'N/A'}"
-                        )
-            if upstream_parts:
-                upstream_context = "\n\n".join(upstream_parts)
-
     # Resolve models for each phase
     plan_model_str = task.plan_model or task.model
     build_model_str = task.model
@@ -850,6 +822,42 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     architecture_snapshot = None
 
     try:
+        # Gather memory context
+        memory_results = await memory.search(task.description[:100])
+        memory_context = ""
+        if memory_results:
+            memory_context = json.dumps(memory_results, indent=2, default=str)
+
+        # Gather upstream context from completed dependencies
+        upstream_context = ""
+        if task.depends_on:
+            dep_ids = [d.strip() for d in task.depends_on.split(",") if d.strip()]
+            if dep_ids:
+                upstream_parts = []
+                with Session(engine) as session:
+                    for dep_id in dep_ids:
+                        dep_task = session.get(Task, dep_id)
+                        if not dep_task:
+                            continue
+                        dep_runs = session.exec(
+                            select(Run)
+                            .where(Run.task_id == dep_id, Run.status == "completed")
+                            .order_by(Run.started_at.desc())
+                        ).all()
+                        if dep_runs:
+                            latest_run = dep_runs[0]
+                            plan_phases = session.exec(
+                                select(RunPhase)
+                                .where(RunPhase.run_id == latest_run.id, RunPhase.phase == "plan", RunPhase.status == "completed")
+                            ).all()
+                            plan_summary = plan_phases[-1].artifact if plan_phases else None
+                            upstream_parts.append(
+                                f"### Task: {dep_task.title}\n"
+                                f"Summary: {latest_run.summary or 'N/A'}\n"
+                                f"Plan: {plan_summary or 'N/A'}"
+                            )
+                if upstream_parts:
+                    upstream_context = "\n\n".join(upstream_parts)
         # ================================================================
         # PHASE 0: Capture test baseline (before any changes)
         # ================================================================
@@ -899,6 +907,44 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
 
         if plan_status != "completed":
             raise RuntimeError(f"Planning phase failed: {plan_artifact}")
+
+        # Check if the plan artifact is actually a structured plan
+        if not _is_valid_plan(plan_artifact):
+            await on_event({
+                "type": "text",
+                "content": "Plan output is not a structured plan. Re-running planner with explicit instructions...",
+            })
+            plan_sys_retry = plan_prompt(
+                workspace=task.workspace,
+                spec_content=spec_content,
+                memory_context=memory_context,
+                upstream_context=upstream_context,
+            )
+            plan_sys_retry += (
+                "\n\n## CRITICAL CORRECTION\n"
+                "Your previous attempt did NOT produce a structured implementation plan. "
+                "You MUST output a structured plan starting with '# Build Plan' and containing "
+                "'### Phase N:' headers with task specs.\n"
+                "Do NOT just call read_file or describe actions. Your FINAL MESSAGE must be "
+                "the structured plan text.\n\n"
+                f"Your previous (invalid) output was:\n{plan_artifact[:2000]}"
+            )
+            plan_status, plan_artifact = await _run_single_phase(
+                run_id=run_id,
+                phase_name="plan",
+                attempt=2,
+                model_str=plan_model_str,
+                workspace=task.workspace,
+                system_prompt=plan_sys_retry,
+                user_message=task.description,
+                allowed_tools=PLAN_TOOLS,
+                memory=memory,
+                approval_gate=None,
+                on_event=on_event,
+                engine=engine,
+            )
+            if plan_status != "completed":
+                raise RuntimeError(f"Planning phase failed on retry: {plan_artifact}")
 
         # ================================================================
         # PHASE 1b: VALIDATE the plan
@@ -1073,9 +1119,61 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
 
                 if build_status != "completed":
                     raise RuntimeError(f"Build phase {phase_idx} failed: {build_artifact}")
-                if not _verify_build_changed(task.workspace):
-                    await on_event({"type": "error", "content": "Build completed but no files were modified. The agent did not call write_file."})
-                    raise RuntimeError(f"Build phase {phase_idx} produced no file changes.")
+
+                # Retry loop: if the build produced no file changes, nudge the agent
+                MAX_BUILD_NO_CHANGE_RETRIES = 2
+                for no_change_retry in range(MAX_BUILD_NO_CHANGE_RETRIES):
+                    if _verify_build_changed(task.workspace):
+                        break
+                    await on_event({
+                        "type": "text",
+                        "content": (
+                            f"Build phase {phase_idx} produced no file changes. "
+                            f"Retry {no_change_retry + 1}/{MAX_BUILD_NO_CHANGE_RETRIES} with explicit feedback..."
+                        ),
+                    })
+                    no_change_feedback = (
+                        "YOUR PREVIOUS ATTEMPT FAILED: You described file changes in text "
+                        "but did NOT call the write_file tool. No files were actually modified.\n\n"
+                        "You MUST call write_file(...) for every file that needs to be created or modified. "
+                        "Describing changes in prose is NOT sufficient. The build is verified by checking "
+                        "git diff -- if write_file is not called, the build fails.\n\n"
+                        f"Previous output that failed:\n{build_artifact[:2000]}"
+                    )
+                    retry_sys = build_prompt(
+                        workspace=task.workspace,
+                        plan_artifact=plan_artifact,
+                        spec_content=spec_content,
+                        memory_context=memory_context,
+                        upstream_context=upstream_context,
+                        qa_feedback=no_change_feedback,
+                        task_spec=phase.get("raw", ""),
+                        architecture_snapshot=architecture_snapshot,
+                    )
+                    if skill and skill.prompt_addon:
+                        retry_sys += f"\n\n{skill.prompt_addon}"
+                    build_status, build_artifact = await _run_single_phase(
+                        run_id=run_id,
+                        phase_name="build",
+                        attempt=no_change_retry + 2,
+                        model_str=build_model_str,
+                        workspace=task.workspace,
+                        system_prompt=retry_sys,
+                        user_message=task.description,
+                        allowed_tools=BUILD_TOOLS,
+                        memory=memory,
+                        approval_gate=bash_gate if require_approval else None,
+                        on_event=on_event,
+                        engine=engine,
+                        batch=phase_idx,
+                    )
+                    if build_status != "completed":
+                        raise RuntimeError(f"Build phase {phase_idx} failed on retry: {build_artifact}")
+                else:
+                    if not _verify_build_changed(task.workspace):
+                        await on_event({"type": "error", "content": "Build completed but no files were modified after all retries. The agent did not call write_file."})
+                        raise RuntimeError(f"Build phase {phase_idx} produced no file changes after {MAX_BUILD_NO_CHANGE_RETRIES + 1} attempts.")
+
                 all_build_results.append(build_artifact)
                 continue
 
@@ -1154,8 +1252,10 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                     })
 
                 if batch_artifacts and not _verify_build_changed(task.workspace):
-                    await on_event({"type": "error", "content": f"Batch {batch_idx} completed but no files were modified. Agents did not call write_file."})
-                    raise RuntimeError(f"Batch {batch_idx} produced no file changes.")
+                    await on_event({
+                        "type": "text",
+                        "content": f"Batch {batch_idx} produced no file changes. This may indicate agents described writes without calling write_file.",
+                    })
 
                 all_build_results.extend(batch_artifacts)
 

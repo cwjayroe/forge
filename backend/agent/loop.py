@@ -3,6 +3,7 @@ Core agent loop. Model-agnostic; driven by a ModelAdapter.
 """
 import asyncio
 import json
+import re
 from datetime import datetime
 from typing import Awaitable, Callable, Optional
 
@@ -21,6 +22,77 @@ from .tools import (
 from ..memory import MemoryClient
 
 MAX_ITERATIONS = 50
+
+_WRITE_PATTERNS = re.compile(
+    r'(?:File:\s*\S+.*Action:\s*creat|'
+    r'write_file\s*\(|'
+    r'I (?:will |would |have |\'ll )(?:create|write|save|add)\s+(?:the |a )?file|'
+    r'creating (?:the |a )?file\s|'
+    r'```\s*\n\s*# (?:File|Path):\s)',
+    re.IGNORECASE,
+)
+
+# Matches JSON blocks in code fences
+_CODE_FENCE_RE = re.compile(r'```(?:json)?\s*\n(.*?)\n\s*```', re.DOTALL)
+
+# Tool names we know about — used to validate extracted calls
+_KNOWN_TOOLS = {"read_file", "write_file", "list_files", "run_bash", "search_files", "search_memory", "store_memory"}
+
+
+def _extract_tool_calls_from_text(text: str) -> list[ToolCall]:
+    """Extract tool calls that models embed as JSON in their text output.
+
+    Some local models (e.g. Ollama qwen2.5-coder) output tool invocations as
+    JSON code blocks instead of using the structured tool-calling API. This
+    function parses those and returns them as ToolCall objects so the agent
+    loop can execute them.
+    """
+    calls: list[ToolCall] = []
+
+    # First try code-fenced JSON blocks
+    candidates = [m.group(1).strip() for m in _CODE_FENCE_RE.finditer(text)]
+
+    # Also try bare JSON objects containing "name" and "arguments"
+    if not candidates:
+        # Simple brace-matching: find top-level { ... } containing "name"
+        depth = 0
+        start = None
+        for i, ch in enumerate(text):
+            if ch == '{' and depth == 0:
+                start = i
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    candidates.append(text[start:i + 1])
+                    start = None
+
+    for raw in candidates:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        name = data.get("name", "")
+        args = data.get("arguments", {})
+        if name not in _KNOWN_TOOLS:
+            continue
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(args, dict):
+            continue
+        calls.append(ToolCall(id=f"text_call_{len(calls)}", name=name, input=args))
+    return calls
+
+
+def _text_describes_write(text: str) -> bool:
+    """Detect if the model described a file write action in text without calling the tool."""
+    return bool(_WRITE_PATTERNS.search(text))
 
 
 class AgentAbortedError(Exception):
@@ -102,6 +174,7 @@ class Agent:
 
         summary = ""
         iterations = 0
+        write_file_called = False
 
         while iterations < MAX_ITERATIONS:
             if self._abort.is_set():
@@ -116,6 +189,55 @@ class Agent:
                 await on_event({"type": "text", "content": response.text})
 
             if response.stop_reason == "end_turn":
+                # Try to extract tool calls embedded as JSON in text output.
+                # Some local models (e.g. Ollama) output tool calls as text
+                # instead of using the structured tool-calling API.
+                if response.text:
+                    text_tool_calls = _extract_tool_calls_from_text(response.text)
+                    if text_tool_calls:
+                        await on_event({
+                            "type": "text",
+                            "content": f"Extracted {len(text_tool_calls)} tool call(s) from text output (model did not use structured tool calling).",
+                        })
+                        # Build a synthetic assistant message with tool_calls
+                        assistant_msg = {
+                            "role": "assistant",
+                            "content": response.text,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc.name,
+                                        "arguments": json.dumps(tc.input),
+                                    },
+                                }
+                                for tc in text_tool_calls
+                            ],
+                        }
+                        messages.append(assistant_msg)
+                        for tc in text_tool_calls:
+                            if self._abort.is_set():
+                                raise AgentAbortedError("Agent was aborted")
+                            if tc.name == "write_file":
+                                write_file_called = True
+                            await on_event({
+                                "type": "tool_call",
+                                "name": tc.name,
+                                "input": tc.input,
+                            })
+                            result = await self._execute_tool(tc)
+                            await on_event({
+                                "type": "tool_result",
+                                "name": tc.name,
+                                "result": result,
+                            })
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": result,
+                            })
+                        continue
                 break
 
             if response.stop_reason == "tool_use" and response.tool_calls:
@@ -141,6 +263,9 @@ class Agent:
                 for tool_call in response.tool_calls:
                     if self._abort.is_set():
                         raise AgentAbortedError("Agent was aborted")
+
+                    if tool_call.name == "write_file":
+                        write_file_called = True
 
                     await on_event({
                         "type": "tool_call",
