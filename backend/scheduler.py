@@ -210,9 +210,21 @@ def get_pipeline_status(engine) -> dict:
             "depends_on": t.depends_on,
         })
 
-    from .orchestrator import is_pipeline_paused
+    from .orchestrator import is_pipeline_paused, is_window_paused
+    from .database import get_settings
+    paused = is_pipeline_paused()
+    window_paused = is_window_paused()
+    settings = get_settings()
+    if window_paused:
+        paused_reason = "schedule"
+    elif paused:
+        paused_reason = "manual"
+    else:
+        paused_reason = None
     return {
-        "paused": is_pipeline_paused(),
+        "paused": paused,
+        "paused_reason": paused_reason,
+        "schedule_active": settings.get("schedule_enabled", False),
         "status_counts": status_counts,
         "tasks": task_summaries,
     }

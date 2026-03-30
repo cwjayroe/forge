@@ -188,7 +188,9 @@ export default function TaskBoard() {
               disabled={pipelineActing}
               className="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 rounded text-sm transition-colors"
             >
-              {pipelineStatus.paused ? '▶ Resume' : '⏸ Pause'}
+              {pipelineStatus.paused ? (
+                <>▶ Resume{pipelineStatus.paused_reason === 'schedule' && <span className="ml-1 text-xs opacity-60">(schedule)</span>}</>
+              ) : '⏸ Pause'}
             </button>
           )}
           <button

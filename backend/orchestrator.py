@@ -58,8 +58,9 @@ _bash_results: dict[str, bool] = {}
 _plan_approvals: dict[str, asyncio.Event] = {}
 _plan_results: dict[str, bool] = {}
 
-# Pipeline pause flag
-_pipeline_paused = False
+# Pipeline pause flags
+_pipeline_paused = False          # set by manual pause/resume
+_pipeline_paused_by_window = False  # set by schedule window checker
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +556,13 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     capture_baseline = settings.get("capture_test_baseline", True)
     max_builders = settings.get("max_concurrent_builders", 3)
 
+    # Load skill (if any) for this task
+    from .models import Skill as _Skill
+    skill = None
+    if task.skill_id:
+        with Session(engine) as session:
+            skill = session.get(_Skill, task.skill_id)
+
     # Build approval gate for bash commands
     async def bash_gate(command: str) -> bool:
         event = asyncio.Event()
@@ -581,6 +589,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             session.add(run_event)
             session.commit()
         await _broadcast(run_id, event)
+        from .webhooks import send_webhook_notifications
+        await send_webhook_notifications(event, task.title, run_id, settings)
 
     # ---------------------------------------------------------------
     # Claude Code path: single pass via /feature-plan-and-build skill
@@ -630,6 +640,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 workspace=task.workspace,
                 task_description=full_description,
                 on_event=on_event,
+                skill_slash_command=skill.claude_code_skill if skill and skill.claude_code_skill else None,
             )
         except Exception as e:
             status = "failed"
@@ -732,6 +743,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 workspace=task.workspace,
                 task_description=full_description,
                 on_event=on_event,
+                skill_slash_command=skill.cursor_skill if skill and skill.cursor_skill else None,
             )
         except Exception as e:
             status = "failed"
@@ -1041,6 +1053,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                     task_spec=phase.get("raw", ""),
                     architecture_snapshot=architecture_snapshot,
                 )
+                if skill and skill.prompt_addon:
+                    build_sys += f"\n\n{skill.prompt_addon}"
                 build_status, build_artifact = await _run_single_phase(
                     run_id=run_id,
                     phase_name="build",
@@ -1090,6 +1104,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         task_spec=task_spec_str,
                         architecture_snapshot=architecture_snapshot,
                     )
+                    if skill and skill.prompt_addon:
+                        b_sys += f"\n\n{skill.prompt_addon}"
                     desc = task_spec_dict.get("description", task.description)
                     return await _run_single_phase(
                         run_id=run_id,
@@ -1192,6 +1208,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                                 review_feedback=rev_artifact,
                                 architecture_snapshot=architecture_snapshot,
                             )
+                            if skill and skill.prompt_addon:
+                                retry_sys += f"\n\n{skill.prompt_addon}"
                             retry_status, retry_artifact = await _run_single_phase(
                                 run_id=run_id,
                                 phase_name="build",
@@ -1318,6 +1336,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         qa_feedback=qa_feedback,
                         architecture_snapshot=architecture_snapshot,
                     )
+                    if skill and skill.prompt_addon:
+                        fix_sys += f"\n\n{skill.prompt_addon}"
                     fix_status, fix_artifact = await _run_single_phase(
                         run_id=run_id,
                         phase_name="build",
@@ -1475,4 +1495,13 @@ def set_pipeline_paused(paused: bool) -> None:
 
 
 def is_pipeline_paused() -> bool:
-    return _pipeline_paused
+    return _pipeline_paused or _pipeline_paused_by_window
+
+
+def set_window_paused(paused: bool) -> None:
+    global _pipeline_paused_by_window
+    _pipeline_paused_by_window = paused
+
+
+def is_window_paused() -> bool:
+    return _pipeline_paused_by_window

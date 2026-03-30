@@ -76,3 +76,11 @@ export const getPipelineStatus = () => apiFetch('/pipeline/status')
 
 // Run phases
 export const getRunPhases = (runId) => apiFetch(`/runs/${runId}/phases`)
+
+// Skills
+export const getSkills = () => apiFetch('/skills')
+export const createSkill = (body) => apiFetch('/skills', { method: 'POST', body })
+export const updateSkill = (id, body) => apiFetch(`/skills/${id}`, { method: 'PUT', body })
+export const deleteSkill = (id) => apiFetch(`/skills/${id}`, { method: 'DELETE' })
+export const discoverCliSkills = (workspace) =>
+  apiFetch(`/skills/discover${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getSettings, listTemplates, searchMemory, updateTask } from '../api'
+import { createTask, getSettings, getSkills, listTemplates, searchMemory, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -26,6 +26,7 @@ const EMPTY = {
   qa_model: '',
   max_retries: 3,
   depends_on: [],
+  skill_id: null,
 }
 
 export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
@@ -37,7 +38,11 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [templates, setTemplates] = useState([])
   const [showTemplates, setShowTemplates] = useState(false)
+  const [skills, setSkills] = useState([])
   const overlayRef = useRef(null)
+
+  // Load skills on mount
+  useEffect(() => { getSkills().then(setSkills).catch(() => {}) }, [])
 
   // Populate form on open
   useEffect(() => {
@@ -53,6 +58,7 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
         qa_model: task.qa_model || '',
         max_retries: task.max_retries ?? 3,
         depends_on: task.depends_on ? task.depends_on.split(',').filter(Boolean) : [],
+        skill_id: task.skill_id || null,
       })
     } else if (cloneFrom) {
       setForm({
@@ -66,6 +72,7 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
         qa_model: cloneFrom.qa_model || '',
         max_retries: cloneFrom.max_retries ?? 3,
         depends_on: [],
+        skill_id: cloneFrom.skill_id || null,
       })
     } else {
       // Load defaults from settings for create mode
@@ -135,6 +142,7 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
       qa_model: form.qa_model || undefined,
       max_retries: form.max_retries,
       depends_on: form.depends_on.length ? form.depends_on.join(',') : null,
+      skill_id: form.skill_id || null,
     }
     try {
       const saved = task
@@ -211,6 +219,34 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
               placeholder="Implement feature X"
             />
           </div>
+
+          {skills.length > 0 && (
+            <Field label="Skill">
+              <select
+                className={input}
+                value={form.skill_id || ''}
+                onChange={(e) => {
+                  const id = e.target.value || null
+                  set('skill_id', id)
+                  if (id) {
+                    const skill = skills.find((s) => s.id === id)
+                    if (skill?.template_description && !form.description.trim()) {
+                      set('description', skill.template_description)
+                    }
+                  }
+                }}
+              >
+                <option value="">General purpose</option>
+                {skills.map((s) => (
+                  <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                ))}
+              </select>
+              {form.skill_id && (() => {
+                const s = skills.find((x) => x.id === form.skill_id)
+                return s ? <p className="text-xs text-gray-500 mt-1">{s.description}</p> : null
+              })()}
+            </Field>
+          )}
 
           <Field label="Description *">
             <textarea
@@ -290,7 +326,15 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
           {form.model.startsWith('claude-code/') || form.model.startsWith('cursor-code/') ? (
             <div className="border border-gray-700 rounded p-3">
               <p className="text-xs text-gray-500">
-                {form.model.startsWith('cursor-code/') ? 'Cursor' : 'Claude Code'} handles planning, building, and QA via the <span className="text-gray-300">/feature-plan-and-build</span> skill — no per-phase model config needed.
+                {form.model.startsWith('cursor-code/') ? 'Cursor' : 'Claude Code'} handles planning, building, and QA via the{' '}
+                <span className="text-gray-300">
+                  {(() => {
+                    const s = skills.find((x) => x.id === form.skill_id)
+                    const cmd = form.model.startsWith('cursor-code/') ? s?.cursor_skill : s?.claude_code_skill
+                    return cmd || '/feature-plan-and-build'
+                  })()}
+                </span>{' '}
+                skill — no per-phase model config needed.
               </p>
             </div>
           ) : (
