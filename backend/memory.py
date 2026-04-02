@@ -5,11 +5,8 @@ Uses memory_core (mem0 + ChromaDB) when available; falls back to a local
 JSON stub so the backend works without the optional dependency.
 """
 import asyncio
-import json
 import logging
 import os
-import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 

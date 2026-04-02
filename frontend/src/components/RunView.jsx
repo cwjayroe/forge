@@ -4,6 +4,8 @@ import { abortRun, approveBash, getRun } from '../api'
 import useWebSocket from '../hooks/useWebSocket'
 import { useTasksContext } from '../TasksContext'
 
+const WRITE_TOOLS = ['write_file', 'Write', 'Edit']
+
 export default function RunView() {
   const { runId } = useParams()
   const navigate = useNavigate()
@@ -59,7 +61,7 @@ export default function RunView() {
     for (let i = 0; i < allEvents.length; i++) {
       const e = allEvents[i]
       const content = e.content != null && typeof e.content === 'object' ? e.content : e
-      const isWriteTool = content?.type === 'tool_call' && ['write_file', 'Write', 'Edit'].includes(content?.name)
+      const isWriteTool = content?.type === 'tool_call' && WRITE_TOOLS.includes(content?.name)
       if (isWriteTool) {
         const path = content?.input?.path || content?.input?.file_path
         if (!path) continue
@@ -142,7 +144,7 @@ export default function RunView() {
   const seenPaths = new Set()
   for (const e of allEvents) {
     const content = e.content || e
-    if (content?.type === 'tool_call' && ['write_file', 'Write', 'Edit'].includes(content?.name)) {
+    if (content?.type === 'tool_call' && WRITE_TOOLS.includes(content?.name)) {
       const p = content?.input?.path || content?.input?.file_path
       if (p && !seenPaths.has(p)) {
         seenPaths.add(p)
