@@ -30,7 +30,7 @@ from .models import (
     TaskUpdate,
 )
 from .orchestrator import abort_run, deregister_ws_listener, is_pipeline_paused, is_window_paused, register_ws_listener, resolve_bash_approval, resolve_plan_approval, set_window_paused, start_run
-from .scheduler import check_ready_tasks, get_pipeline_status, pause_pipeline, start_pipeline, validate_dependencies
+from .scheduler import check_ready_tasks, get_pipeline_status, pause_pipeline, start_pipeline, start_task_with_dependencies, validate_dependencies
 
 app = FastAPI(title="Forge", version="0.1.0")
 
@@ -419,25 +419,11 @@ async def run_task(task_id: str, session: Session = Depends(get_session)):
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    if task.status == "running":
+    if task.status in ("running", "planning", "building", "qa"):
         raise HTTPException(status_code=409, detail="Task is already running")
 
-    # Create run record
-    run = Run(task_id=task_id)
-    session.add(run)
-
-    # Update task status
-    task.status = "running"
-    task.updated_at = datetime.utcnow()
-    session.add(task)
-
-    session.commit()
-    session.refresh(run)
-
-    # Start agent in background
-    await start_run(run.id, task, engine)
-
-    return run
+    # Start the task and any pending dependencies in the chain
+    return await start_task_with_dependencies(task_id, engine)
 
 
 # ===========================================================================

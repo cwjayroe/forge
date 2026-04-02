@@ -171,6 +171,94 @@ async def check_ready_tasks(engine) -> list[str]:
     return started
 
 
+async def start_task_with_dependencies(task_id: str, engine) -> dict:
+    """
+    Start a specific task and all its pending ancestors (transitive deps) that are ready.
+
+    Pending deps whose own deps are not yet done are "queued" — they will auto-start
+    via check_ready_tasks() as upstream tasks complete.
+
+    Returns:
+        {
+            "started": [{"task_id": ..., "run_id": ...}, ...],
+            "queued":  [task_id, ...]
+        }
+    """
+    from .orchestrator import active_runs, start_run
+    from .database import get_settings
+
+    settings = get_settings()
+    max_concurrent = settings.get("max_concurrent_tasks", 3)
+
+    started: list[dict] = []
+    queued: list[str] = []
+
+    with Session(engine) as session:
+        all_tasks = session.exec(select(Task)).all()
+        task_map = {t.id: t for t in all_tasks}
+
+        if task_id not in task_map:
+            return {"started": [], "queued": []}
+
+        # Collect all transitive dependency IDs of the target task (including itself)
+        def collect_chain(tid: str, visited: set) -> None:
+            if tid in visited:
+                return
+            visited.add(tid)
+            task = task_map.get(tid)
+            if task and task.depends_on:
+                for dep_id in task.depends_on.split(","):
+                    dep_id = dep_id.strip()
+                    if dep_id:
+                        collect_chain(dep_id, visited)
+
+        chain_ids: set = set()
+        collect_chain(task_id, chain_ids)
+
+        # Only consider pending tasks in the chain (skip done/running/failed)
+        pending_in_chain = [
+            task_map[tid] for tid in chain_ids
+            if tid in task_map and task_map[tid].status == "pending"
+        ]
+
+        # Sort by order then created_at for deterministic start order
+        pending_in_chain.sort(key=lambda t: (t.order, t.created_at))
+
+        running_count = len(active_runs)
+        slots = max(0, max_concurrent - running_count)
+
+        for task in pending_in_chain:
+            # A task is "ready" if all its own deps are done
+            all_deps_done = True
+            if task.depends_on:
+                dep_ids = [d.strip() for d in task.depends_on.split(",") if d.strip()]
+                for dep_id in dep_ids:
+                    dep_task = task_map.get(dep_id)
+                    if not dep_task or dep_task.status != "done":
+                        all_deps_done = False
+                        break
+
+            if all_deps_done:
+                if slots > 0:
+                    run = Run(task_id=task.id)
+                    session.add(run)
+                    task.status = "running"
+                    task.updated_at = datetime.utcnow()
+                    session.add(task)
+                    session.commit()
+                    session.refresh(run)
+                    session.refresh(task)
+                    await start_run(run.id, task, engine)
+                    started.append({"task_id": task.id, "run_id": run.id})
+                    slots -= 1
+                else:
+                    queued.append(task.id)
+            else:
+                queued.append(task.id)
+
+    return {"started": started, "queued": queued}
+
+
 async def start_pipeline(engine) -> list[str]:
     """
     Start all root tasks (no unmet dependencies) up to the concurrency limit.

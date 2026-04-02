@@ -103,9 +103,14 @@ export default function TaskBoard() {
   const handleRun = async (task) => {
     setActionError(null)
     try {
-      const run = await runTask(task.id)
+      const result = await runTask(task.id)
       refresh()
-      navigate(`/runs/${run.id}`)
+      const targetEntry = result.started?.find(s => s.task_id === task.id)
+      if (targetEntry) {
+        navigate(`/runs/${targetEntry.run_id}`)
+      }
+      // If task is queued (deps starting first), stay on board — the task list
+      // will update automatically as dependencies complete.
     } catch (e) {
       setActionError(e.message)
     }
@@ -223,6 +228,7 @@ export default function TaskBoard() {
               onDelete={handleDelete}
               onClick={handleCardClick}
               onClone={handleClone}
+              allTasks={tasks}
             />
           ))
 
@@ -271,10 +277,20 @@ export default function TaskBoard() {
   )
 }
 
-function TaskCard({ task, onEdit, onRun, onDelete, onClick, onClone }) {
+function TaskCard({ task, onEdit, onRun, onDelete, onClick, onClone, allTasks }) {
   const isPending = task.status === 'pending'
   const isRunning = ['running', 'planning', 'building', 'qa'].includes(task.status)
   const isDone = ['done', 'failed', 'review'].includes(task.status)
+
+  // Check if any direct dependencies are not yet done
+  const hasPendingDeps = (() => {
+    if (!task.depends_on) return false
+    const depIds = task.depends_on.split(',').map(s => s.trim()).filter(Boolean)
+    return depIds.some(id => {
+      const dep = allTasks?.find(t => t.id === id)
+      return !dep || dep.status !== 'done'
+    })
+  })()
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: task.id, disabled: !isPending })
@@ -330,9 +346,10 @@ function TaskCard({ task, onEdit, onRun, onDelete, onClick, onClone }) {
             <button
               onClick={handleRun}
               disabled={acting}
+              title={hasPendingDeps ? 'Dependencies will be started first' : undefined}
               className="text-xs px-2.5 py-1 bg-orange-500/20 hover:bg-orange-500/40 text-orange-400 rounded transition-colors disabled:opacity-50"
             >
-              {acting ? '…' : 'Run'}
+              {acting ? '…' : hasPendingDeps ? 'Run (+ deps)' : 'Run'}
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); onEdit(task) }}
