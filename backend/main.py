@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
+from fastapi.staticfiles import StaticFiles
+
 from .database import create_db_and_tables, engine, get_session, get_settings, save_settings
 from .memory import MemoryClient
 from pathlib import Path
@@ -579,9 +581,7 @@ class MemoryCreate(BaseModel):
 
 @app.post("/memory", status_code=201)
 async def create_memory(payload: MemoryCreate):
-    meta = payload.metadata or {}
-    if payload.project_id:
-        meta["project_id"] = payload.project_id
+    meta = {**(payload.metadata or {}), **({"project_id": payload.project_id} if payload.project_id else {})}
     memory_id = await memory_client.store(payload.content, meta)
     return {"id": memory_id}
 
@@ -683,9 +683,6 @@ async def stream_run(websocket: WebSocket, run_id: str):
 # Static frontend (MUST be last — after all API routes)
 # ===========================================================================
 
-from pathlib import Path as _Path
-from fastapi.staticfiles import StaticFiles as _StaticFiles
-
-_dist = _Path(__file__).parent.parent / "frontend" / "dist"
+_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if _dist.exists():
-    app.mount("/", _StaticFiles(directory=str(_dist), html=True), name="frontend")
+    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="frontend")

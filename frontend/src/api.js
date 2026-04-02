@@ -34,6 +34,10 @@ export const getRuns = (task_id) => apiFetch(`/runs${task_id ? `?task_id=${task_
 export const getRun = (id) => apiFetch(`/runs/${id}`)
 export const abortRun = (id) => apiFetch(`/runs/${id}/abort`, { method: 'POST' })
 
+function _projectParam(projectId) {
+  return projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
+}
+
 // Memory
 export const listProjects = () => apiFetch('/memory/projects')
 export const searchMemory = (q, projectId) => {
@@ -41,18 +45,9 @@ export const searchMemory = (q, projectId) => {
   if (projectId) params.set('project_id', projectId)
   return apiFetch(`/memory/search?${params}`)
 }
-export const listMemory = (projectId) => {
-  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
-  return apiFetch(`/memory/list${params}`)
-}
-export const deleteMemory = (id, projectId) => {
-  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
-  return apiFetch(`/memory/${id}${params}`, { method: 'DELETE' })
-}
-export const getMemoryStats = (projectId) => {
-  const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
-  return apiFetch(`/memory/stats${params}`)
-}
+export const listMemory = (projectId) => apiFetch(`/memory/list${_projectParam(projectId)}`)
+export const deleteMemory = (id, projectId) => apiFetch(`/memory/${id}${_projectParam(projectId)}`, { method: 'DELETE' })
+export const getMemoryStats = (projectId) => apiFetch(`/memory/stats${_projectParam(projectId)}`)
 export const createMemory = (content, metadata, projectId) =>
   apiFetch('/memory', { method: 'POST', body: { content, metadata, project_id: projectId } })
 
