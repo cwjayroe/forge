@@ -36,6 +36,7 @@ from .agent.prompts import (
 )
 from .memory import MemoryClient
 from .models import Run, RunEvent, RunPhase, Task
+from .providers import ProviderIntegrationError, create_change_request
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -319,6 +320,48 @@ async def _capture_test_baseline(workspace: str) -> str:
         return "Test suite timed out (120s limit)."
     except Exception as e:
         return f"Could not capture test baseline: {e}"
+
+
+async def _maybe_create_provider_change_request(
+    *,
+    task: Task,
+    branch_name: Optional[str],
+    on_event,
+) -> None:
+    if not branch_name:
+        return
+    from .database import get_settings as _get_settings
+
+    settings = _get_settings()
+    if not settings.get("provider_integration_enabled", False):
+        return
+    if not settings.get("provider_auto_create_pr", False):
+        return
+
+    labels = [v.strip() for v in (settings.get("provider_default_labels") or "").split(",") if v.strip()]
+    try:
+        created = await create_change_request(
+            provider_type=settings.get("provider_type", "github"),
+            api_base_url=settings.get("provider_api_base_url"),
+            token=settings.get("provider_token") or "",
+            repo_slug=settings.get("provider_repo") or "",
+            head_branch=branch_name,
+            base_branch=settings.get("provider_default_base_branch", "main"),
+            title=task.title,
+            description=task.description,
+            labels=labels,
+        )
+        await on_event({
+            "type": "provider_change_request_created",
+            "provider": created["provider"],
+            "number": created["number"],
+            "url": created["url"],
+            "state": created["state"],
+        })
+    except ProviderIntegrationError as exc:
+        await on_event({"type": "provider_change_request_error", "content": str(exc)})
+    except Exception:
+        await on_event({"type": "provider_change_request_error", "content": "Automatic PR/MR creation failed."})
 
 
 # ---------------------------------------------------------------------------
@@ -1590,6 +1633,11 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     # Auto-commit changes on the task branch when the task succeeds or goes to review
     if final_status in ("completed", "review") and branch_name:
         await _commit_task_changes(task.title, task.workspace)
+        await _maybe_create_provider_change_request(
+            task=task,
+            branch_name=branch_name,
+            on_event=on_event,
+        )
 
     # Update Run record
     with Session(engine) as session:

@@ -25,6 +25,14 @@ const DEFAULTS = {
   schedule_days: '0,1,2,3,4,5,6',
   quality_gates_enabled: false,
   quality_gate_rules: '[]',
+  provider_integration_enabled: false,
+  provider_type: 'github',
+  provider_repo: '',
+  provider_token: '',
+  provider_api_base_url: '',
+  provider_default_base_branch: 'main',
+  provider_auto_create_pr: false,
+  provider_default_labels: '',
 }
 
 export default function Settings() {
@@ -346,6 +354,88 @@ export default function Settings() {
               Supported rule fields: <code>name</code>, <code>enabled</code>, <code>on_transition</code> (
               <code>plan_to_build</code> or <code>qa_to_done</code>), <code>task_pattern</code> (regex), <code>min_retries</code>, <code>require_supervised</code>, <code>require_plan_validation_pass</code>, <code>require_qa_pass</code>.
             </p>
+          </div>
+        </div>
+
+        {/* Provider integration */}
+        <div className="pt-2 border-t border-gray-700">
+          <p className="text-xs text-gray-500 uppercase tracking-wider mb-4">Git Provider Integration</p>
+          <div className="space-y-4">
+            <Field label="Enable PR/MR integration">
+              <Toggle
+                value={form.provider_integration_enabled}
+                onChange={(v) => set('provider_integration_enabled', v)}
+              />
+            </Field>
+
+            <div className="flex gap-2">
+              {['github', 'gitlab'].map((provider) => (
+                <button
+                  key={provider}
+                  type="button"
+                  onClick={() => set('provider_type', provider)}
+                  className={`px-3 py-1.5 rounded text-sm capitalize transition-colors ${
+                    form.provider_type === provider
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  }`}
+                >
+                  {provider}
+                </button>
+              ))}
+            </div>
+
+            <Field label="Repository (owner/repo)">
+              <input
+                className={input}
+                value={form.provider_repo || ''}
+                onChange={(e) => set('provider_repo', e.target.value)}
+                placeholder="acme/forge"
+              />
+            </Field>
+
+            <Field label="Provider token">
+              <input
+                type="password"
+                className={input}
+                value={form.provider_token || ''}
+                onChange={(e) => set('provider_token', e.target.value)}
+                placeholder={form.provider_type === 'gitlab' ? 'glpat-…' : 'ghp_…'}
+              />
+            </Field>
+
+            <Field label="API base URL (optional)">
+              <input
+                className={input}
+                value={form.provider_api_base_url || ''}
+                onChange={(e) => set('provider_api_base_url', e.target.value)}
+                placeholder={form.provider_type === 'gitlab' ? 'https://gitlab.example.com/api/v4' : 'https://api.github.com'}
+              />
+            </Field>
+
+            <div className="flex gap-4">
+              <Field label="Default base branch">
+                <input
+                  className={`${input} w-40`}
+                  value={form.provider_default_base_branch || 'main'}
+                  onChange={(e) => set('provider_default_base_branch', e.target.value)}
+                />
+              </Field>
+              <Field label="Auto-create PR/MR after successful run">
+                <Toggle
+                  value={form.provider_auto_create_pr}
+                  onChange={(v) => set('provider_auto_create_pr', v)}
+                />
+              </Field>
+              <Field label="Default labels (CSV)">
+                <input
+                  className={`${input} w-60`}
+                  value={form.provider_default_labels || ''}
+                  onChange={(e) => set('provider_default_labels', e.target.value)}
+                  placeholder="forge,automation"
+                />
+              </Field>
+            </div>
           </div>
         </div>
 

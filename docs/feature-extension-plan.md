@@ -363,3 +363,45 @@ Phase 4 maps to **Phase B.1: Pipeline policy engine (quality gates)** and is sco
 - Operators can define and save quality gate rules from settings.
 - Runs emit `quality_gate_result` events for evaluated transitions.
 - Runs fail early with explicit reasons when configured gate requirements are not met.
+
+---
+
+## 12) Phase 5 Execution Plan (Implemented)
+
+Phase 5 maps to **Phase B.2: Native GitHub/GitLab provider integration** and is scoped to provide an operator-ready PR/MR flow (create + status sync) using existing run branch metadata.
+
+### 12.1 Functional goals
+- Add configurable provider integration settings for GitHub/GitLab in Forge settings.
+- Allow operators to create a PR/MR from a completed run directly in `RunView`.
+- Support automatic PR/MR creation after successful runs when enabled.
+- Provide PR/MR status sync endpoint for badge/link backflow into the run UI.
+
+### 12.2 Delivery slices
+1. **Provider adapter layer**
+   - Add `backend/providers.py` with a provider-agnostic API for:
+     - create change request (GitHub PR / GitLab MR),
+     - fetch change request status.
+   - Normalize payloads to a shared shape (`provider`, `number`, `url`, `state`).
+
+2. **Backend API + run event linkage**
+   - Add run-scoped endpoints:
+     - `POST /runs/{run_id}/provider/change-request`
+     - `GET /runs/{run_id}/provider/change-request/status`
+   - Store `provider_change_request_created` run events so linkage stays auditable and queryable.
+   - Emit `provider_change_request_created` / `provider_change_request_error` events during optional auto-create path.
+
+3. **Settings + run UX**
+   - Add settings controls for provider type, repo slug, token, API base URL, default base branch, default labels, and auto-create toggle.
+   - Add `RunView` actions:
+     - “Create PR/MR” button when run has a branch and no linked change request.
+     - “Open PR/MR” link once created.
+
+### 12.3 Out-of-scope for this phase
+- OAuth account linking and token exchange flows.
+- Reviewer assignment and branch protection/ruleset automation.
+- Webhook ingestion for fully push-based status updates.
+
+### 12.4 Success criteria
+- Operators can create a PR/MR from a run in one click from `RunView`.
+- Runs can surface current PR/MR status via provider API lookup.
+- Successful runs can optionally auto-create a PR/MR when integration is enabled.

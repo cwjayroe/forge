@@ -36,6 +36,11 @@ from .models import (
     TaskUpdate,
 )
 from .orchestrator import abort_run, deregister_ws_listener, is_pipeline_paused, is_window_paused, register_ws_listener, resolve_bash_approval, resolve_plan_approval, set_window_paused, start_run
+from .providers import (
+    ProviderIntegrationError,
+    create_change_request,
+    get_change_request_status,
+)
 from .scheduler import check_ready_tasks, get_pipeline_status, pause_pipeline, start_pipeline, start_task_with_dependencies, validate_dependencies
 
 app = FastAPI(title="Forge", version="0.1.0")
@@ -65,6 +70,23 @@ def _parse_iso_datetime(raw: Optional[str], field_name: str) -> Optional[datetim
         return datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
         raise HTTPException(400, f"Invalid {field_name}; expected ISO-8601 datetime") from exc
+
+
+def _parse_json_content(raw: str):
+    try:
+        return json.loads(raw)
+    except Exception:
+        return raw
+
+
+def _find_latest_change_request_event(events: list[RunEvent]) -> Optional[dict]:
+    for event in reversed(events):
+        if event.type != "provider_change_request_created":
+            continue
+        payload = _parse_json_content(event.content)
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def _categorize_failure(text: str) -> tuple[str, list[str]]:
@@ -864,11 +886,102 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
         **run.model_dump(),
         "failure_metadata": failure_metadata,
         "events": [
-            {**e.model_dump(), "content": json.loads(e.content)}
+            {**e.model_dump(), "content": _parse_json_content(e.content)}
             for e in events
         ],
         "phases": [p.model_dump() for p in phases],
     }
+
+
+class CreateProviderChangeRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    base_branch: Optional[str] = None
+    labels: Optional[list[str]] = None
+
+
+@app.post("/runs/{run_id}/provider/change-request")
+async def create_provider_change_request(
+    run_id: str,
+    payload: CreateProviderChangeRequest,
+    session: Session = Depends(get_session),
+):
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    task = session.get(Task, run.task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not run.branch_name:
+        raise HTTPException(status_code=409, detail="Run has no branch to open a PR/MR from")
+
+    settings = get_settings()
+    if not settings.get("provider_integration_enabled", False):
+        raise HTTPException(status_code=409, detail="Provider integration is disabled in settings")
+
+    labels = payload.labels
+    if labels is None:
+        labels = _parse_csv_values(settings.get("provider_default_labels"))
+
+    try:
+        created = await create_change_request(
+            provider_type=settings.get("provider_type", "github"),
+            api_base_url=settings.get("provider_api_base_url"),
+            token=settings.get("provider_token") or "",
+            repo_slug=settings.get("provider_repo") or "",
+            head_branch=run.branch_name,
+            base_branch=payload.base_branch or settings.get("provider_default_base_branch", "main"),
+            title=payload.title or task.title,
+            description=payload.description or task.description,
+            labels=labels,
+        )
+    except ProviderIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    event_payload = {
+        "type": "provider_change_request_created",
+        "provider": created["provider"],
+        "number": created["number"],
+        "url": created["url"],
+        "state": created["state"],
+    }
+    session.add(
+        RunEvent(
+            run_id=run_id,
+            type="provider_change_request_created",
+            content=json.dumps(event_payload),
+        )
+    )
+    session.commit()
+    return event_payload
+
+
+@app.get("/runs/{run_id}/provider/change-request/status")
+async def get_provider_change_request_status(run_id: str, session: Session = Depends(get_session)):
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    settings = get_settings()
+    if not settings.get("provider_integration_enabled", False):
+        raise HTTPException(status_code=409, detail="Provider integration is disabled in settings")
+
+    events = session.exec(
+        select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.id)
+    ).all()
+    latest_event = _find_latest_change_request_event(events)
+    if not latest_event:
+        raise HTTPException(status_code=404, detail="No provider change request linked to this run")
+    try:
+        status_payload = await get_change_request_status(
+            provider_type=settings.get("provider_type", "github"),
+            api_base_url=settings.get("provider_api_base_url"),
+            token=settings.get("provider_token") or "",
+            repo_slug=settings.get("provider_repo") or "",
+            number=int(latest_event["number"]),
+        )
+    except ProviderIntegrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return status_payload
 
 
 class BashApproval(BaseModel):
