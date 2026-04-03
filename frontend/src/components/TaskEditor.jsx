@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getSettings, getSkills, getTaskTemplates, listTemplates, searchMemory, updateTask } from '../api'
+import { createTask, getProjects, getSettings, getSkills, getTaskTemplates, listTemplates, searchMemory, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -27,6 +27,7 @@ const EMPTY = {
   max_retries: 3,
   depends_on: [],
   skill_id: null,
+  project_id: null,
 }
 
 export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, onSaved }) {
@@ -41,11 +42,13 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
   const [showTemplates, setShowTemplates] = useState(false)
   const [showTaskTemplates, setShowTaskTemplates] = useState(false)
   const [skills, setSkills] = useState([])
+  const [projects, setProjects] = useState([])
   const overlayRef = useRef(null)
 
   // Load skills on mount
   useEffect(() => { getSkills().then(setSkills).catch(() => {}) }, [])
   useEffect(() => { getTaskTemplates().then(setTaskTemplates).catch(() => {}) }, [])
+  useEffect(() => { getProjects().then(setProjects).catch(() => setProjects([])) }, [])
 
   // Populate form on open
   useEffect(() => {
@@ -62,6 +65,7 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
         max_retries: task.max_retries ?? 3,
         depends_on: task.depends_on ? task.depends_on.split(',').filter(Boolean) : [],
         skill_id: task.skill_id || null,
+        project_id: task.project_id || null,
       })
     } else if (cloneFrom) {
       setForm({
@@ -76,6 +80,7 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
         max_retries: cloneFrom.max_retries ?? 3,
         depends_on: [],
         skill_id: cloneFrom.skill_id || null,
+        project_id: cloneFrom.project_id || null,
       })
     } else {
       // Load defaults from settings for create mode
@@ -170,6 +175,7 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
       max_retries: form.max_retries,
       depends_on: form.depends_on.length ? form.depends_on.join(',') : null,
       skill_id: form.skill_id || null,
+      project_id: form.project_id || null,
     }
     try {
       const saved = task
@@ -343,6 +349,21 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
               placeholder="/path/to/project"
             />
           </Field>
+
+          {projects.length > 0 && (
+            <Field label="Project">
+              <select
+                className={input}
+                value={form.project_id || ''}
+                onChange={(e) => set('project_id', e.target.value || null)}
+              >
+                <option value="">No project</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </Field>
+          )}
 
           <Field label="Spec file path">
             <input

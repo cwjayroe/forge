@@ -20,6 +20,12 @@ from .memory import MemoryClient
 from pathlib import Path
 
 from .models import (
+    ContextPack,
+    ContextPackCreate,
+    ContextPackUpdate,
+    Project,
+    ProjectCreate,
+    ProjectUpdate,
     Run,
     RunEvent,
     RunPhase,
@@ -77,6 +83,20 @@ def _parse_json_content(raw: str):
         return json.loads(raw)
     except Exception:
         return raw
+
+
+def _parse_workspaces(raw: str) -> list[str]:
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [str(item).strip() for item in data if str(item).strip()]
+
+
+def _project_payload(project: Project) -> dict:
+    return {**project.model_dump(), "workspaces": _parse_workspaces(project.workspaces)}
 
 
 def _find_latest_change_request_event(events: list[RunEvent]) -> Optional[dict]:
@@ -421,6 +441,121 @@ async def on_startup():
 
 
 # ===========================================================================
+# Projects + Context Packs
+# ===========================================================================
+
+@app.get("/projects")
+def list_projects(session: Session = Depends(get_session)):
+    projects = session.exec(select(Project).order_by(Project.created_at.desc())).all()
+    return [_project_payload(project) for project in projects]
+
+
+@app.post("/projects", status_code=201)
+def create_project(payload: ProjectCreate, session: Session = Depends(get_session)):
+    if session.exec(select(Project).where(Project.slug == payload.slug)).first():
+        raise HTTPException(status_code=409, detail="Project slug already exists")
+    project = Project(
+        name=payload.name,
+        slug=payload.slug,
+        description=payload.description,
+        workspaces=json.dumps(payload.workspaces),
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return _project_payload(project)
+
+
+@app.put("/projects/{project_id}")
+def update_project(project_id: str, payload: ProjectUpdate, session: Session = Depends(get_session)):
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    if "workspaces" in update_data:
+        update_data["workspaces"] = json.dumps(update_data["workspaces"] or [])
+    for field, value in update_data.items():
+        setattr(project, field, value)
+    project.updated_at = datetime.utcnow()
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return _project_payload(project)
+
+
+@app.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: str, session: Session = Depends(get_session)):
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    context_packs = session.exec(select(ContextPack).where(ContextPack.project_id == project_id)).all()
+    for pack in context_packs:
+        session.delete(pack)
+    project_tasks = session.exec(select(Task).where(Task.project_id == project_id)).all()
+    for task in project_tasks:
+        task.project_id = None
+        session.add(task)
+    session.delete(project)
+    session.commit()
+
+
+@app.get("/projects/{project_id}/context-packs")
+def list_context_packs(project_id: str, session: Session = Depends(get_session)):
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return session.exec(
+        select(ContextPack).where(ContextPack.project_id == project_id).order_by(ContextPack.created_at.desc())
+    ).all()
+
+
+@app.post("/projects/{project_id}/context-packs", status_code=201)
+def create_context_pack(project_id: str, payload: ContextPackCreate, session: Session = Depends(get_session)):
+    project = session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    pack = ContextPack(
+        project_id=project_id,
+        name=payload.name,
+        content=payload.content,
+        workspace_hint=payload.workspace_hint,
+    )
+    session.add(pack)
+    session.commit()
+    session.refresh(pack)
+    return pack
+
+
+@app.put("/projects/{project_id}/context-packs/{pack_id}")
+def update_context_pack(
+    project_id: str,
+    pack_id: str,
+    payload: ContextPackUpdate,
+    session: Session = Depends(get_session),
+):
+    pack = session.get(ContextPack, pack_id)
+    if not pack or pack.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Context pack not found")
+    update_data = payload.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(pack, field, value)
+    pack.updated_at = datetime.utcnow()
+    session.add(pack)
+    session.commit()
+    session.refresh(pack)
+    return pack
+
+
+@app.delete("/projects/{project_id}/context-packs/{pack_id}", status_code=204)
+def delete_context_pack(project_id: str, pack_id: str, session: Session = Depends(get_session)):
+    pack = session.get(ContextPack, pack_id)
+    if not pack or pack.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Context pack not found")
+    session.delete(pack)
+    session.commit()
+
+
+# ===========================================================================
 # Skills
 # ===========================================================================
 
@@ -677,6 +812,14 @@ def search_tasks(
 
 @app.post("/tasks", status_code=201)
 def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
+    if payload.project_id:
+        project = session.get(Project, payload.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        workspaces = _parse_workspaces(project.workspaces)
+        if workspaces and payload.workspace not in workspaces:
+            raise HTTPException(status_code=400, detail="Workspace is not part of selected project")
+
     task = Task(
         title=payload.title,
         description=payload.description,
@@ -687,6 +830,7 @@ def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
         qa_model=payload.qa_model,
         max_retries=payload.max_retries,
         workspace=payload.workspace,
+        project_id=payload.project_id,
         depends_on=payload.depends_on,
         skill_id=payload.skill_id,
     )
@@ -727,6 +871,15 @@ def update_task(task_id: str, payload: TaskUpdate, session: Session = Depends(ge
 
     # Validate dependency changes won't create cycles
     update_data = payload.model_dump(exclude_unset=True)
+    next_project_id = update_data.get("project_id", task.project_id)
+    next_workspace = update_data.get("workspace", task.workspace)
+    if next_project_id:
+        project = session.get(Project, next_project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        workspaces = _parse_workspaces(project.workspaces)
+        if workspaces and next_workspace not in workspaces:
+            raise HTTPException(status_code=400, detail="Workspace is not part of selected project")
     if "depends_on" in update_data and update_data["depends_on"] is not None:
         all_tasks = session.exec(select(Task)).all()
         err = validate_dependencies(task_id, update_data["depends_on"], list(all_tasks))

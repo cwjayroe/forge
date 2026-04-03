@@ -100,3 +100,16 @@ export const updateSkill = (id, body) => apiFetch(`/skills/${id}`, { method: 'PU
 export const deleteSkill = (id) => apiFetch(`/skills/${id}`, { method: 'DELETE' })
 export const discoverCliSkills = (workspace) =>
   apiFetch(`/skills/discover${workspace ? `?workspace=${encodeURIComponent(workspace)}` : ''}`)
+
+// Multi-workspace projects + context packs
+export const getProjects = () => apiFetch('/projects')
+export const createProject = (body) => apiFetch('/projects', { method: 'POST', body })
+export const updateProject = (id, body) => apiFetch(`/projects/${id}`, { method: 'PUT', body })
+export const deleteProject = (id) => apiFetch(`/projects/${id}`, { method: 'DELETE' })
+export const getContextPacks = (projectId) => apiFetch(`/projects/${projectId}/context-packs`)
+export const createContextPack = (projectId, body) =>
+  apiFetch(`/projects/${projectId}/context-packs`, { method: 'POST', body })
+export const updateContextPack = (projectId, packId, body) =>
+  apiFetch(`/projects/${projectId}/context-packs/${packId}`, { method: 'PUT', body })
+export const deleteContextPack = (projectId, packId) =>
+  apiFetch(`/projects/${projectId}/context-packs/${packId}`, { method: 'DELETE' })
