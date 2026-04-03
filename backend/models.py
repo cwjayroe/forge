@@ -214,3 +214,11 @@ class Settings(BaseModel):
     schedule_days: str = "0,1,2,3,4,5,6"  # comma-separated 0=Mon…6=Sun
     quality_gates_enabled: bool = False
     quality_gate_rules: str = "[]"
+    provider_integration_enabled: bool = False
+    provider_type: str = "github"  # github | gitlab
+    provider_repo: Optional[str] = None  # owner/repo
+    provider_token: Optional[str] = None
+    provider_api_base_url: Optional[str] = None
+    provider_default_base_branch: str = "main"
+    provider_auto_create_pr: bool = False
+    provider_default_labels: str = ""

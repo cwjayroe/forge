@@ -88,6 +88,10 @@ export const getPipelineStatus = () => apiFetch('/pipeline/status')
 
 // Run phases
 export const getRunPhases = (runId) => apiFetch(`/runs/${runId}/phases`)
+export const createProviderChangeRequest = (runId, body = {}) =>
+  apiFetch(`/runs/${runId}/provider/change-request`, { method: 'POST', body })
+export const getProviderChangeRequestStatus = (runId) =>
+  apiFetch(`/runs/${runId}/provider/change-request/status`)
 
 // Skills
 export const getSkills = () => apiFetch('/skills')

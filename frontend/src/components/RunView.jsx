@@ -1,6 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { abortRun, approveBash, getRun, runTask, updateTask } from '../api'
+import {
+  abortRun,
+  approveBash,
+  createProviderChangeRequest,
+  getProviderChangeRequestStatus,
+  getRun,
+  runTask,
+  updateTask,
+} from '../api'
 import useWebSocket from '../hooks/useWebSocket'
 import { useTasksContext } from '../TasksContext'
 
@@ -22,6 +30,8 @@ export default function RunView() {
   const [fileDiffs, setFileDiffs] = useState({})
   const [bashApproval, setBashApproval] = useState(null)
   const [retrying, setRetrying] = useState(null)
+  const [creatingCr, setCreatingCr] = useState(false)
+  const [changeRequest, setChangeRequest] = useState(null)
 
   const feedBottomRef = useRef(null)
 
@@ -34,6 +44,12 @@ export default function RunView() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
+  }, [runId])
+
+  useEffect(() => {
+    getProviderChangeRequestStatus(runId)
+      .then((data) => setChangeRequest(data))
+      .catch(() => {})
   }, [runId])
 
   // Live WebSocket events (only when run is still running)
@@ -150,6 +166,18 @@ export default function RunView() {
     }
   }
 
+  const handleCreateChangeRequest = async () => {
+    setCreatingCr(true)
+    try {
+      const created = await createProviderChangeRequest(runId, {})
+      setChangeRequest(created)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setCreatingCr(false)
+    }
+  }
+
   const toggleExpand = (idx) => {
     setExpandedEvents((prev) => {
       const next = new Set(prev)
@@ -228,6 +256,25 @@ export default function RunView() {
           </div>
         </div>
         <StatusBadge status={run?.status} />
+        {changeRequest?.url && (
+          <a
+            href={changeRequest.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs px-2 py-1 rounded bg-blue-900/40 hover:bg-blue-900/70 text-blue-300 transition-colors"
+          >
+            {changeRequest.provider === 'gitlab' ? 'Open MR' : 'Open PR'}
+          </a>
+        )}
+        {!changeRequest?.url && run?.branch_name && run?.status !== 'running' && (
+          <button
+            onClick={handleCreateChangeRequest}
+            disabled={creatingCr}
+            className="text-xs px-2 py-1 rounded bg-blue-900/40 hover:bg-blue-900/70 text-blue-300 transition-colors disabled:opacity-50"
+          >
+            {creatingCr ? 'Creating…' : 'Create PR/MR'}
+          </button>
+        )}
       </div>
 
       {/* Phase progress bar */}
