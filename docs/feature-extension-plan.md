@@ -314,3 +314,52 @@ Phase 3 maps to **Phase A.3: Rich failure summaries and actionable retry UX** an
 - Operators can identify likely root-cause category from the run view in under 10 seconds.
 - Failed runs expose clear, actionable next steps without scanning the full event feed.
 - Operators can launch a guided retry strategy in one click from the failure panel.
+
+---
+
+## 11) Phase 4 Execution Plan (Implemented)
+
+Phase 4 maps to **Phase B.1: Pipeline policy engine (quality gates)** and is scoped to add configurable transition gates without changing the existing task/run data model.
+
+### 11.1 Functional goals
+- Add configurable quality gate rules in settings.
+- Evaluate gates at key transitions:
+  - `plan_to_build`
+  - `qa_to_done`
+- Emit auditable gate results into run events for operator visibility.
+- Block transition when active gate rules fail and return clear failure reasons.
+
+### 11.2 Delivery slices
+1. **Settings and validation**
+   - Add `quality_gates_enabled` and `quality_gate_rules` to persisted settings.
+   - Validate `quality_gate_rules` as JSON array in `/settings` updates.
+
+2. **Gate evaluator in orchestrator**
+   - Parse rules safely (invalid JSON falls back to empty list at runtime).
+   - Evaluate rules against task context and transition context.
+   - Supported rule fields:
+     - `name`
+     - `enabled`
+     - `on_transition` (`plan_to_build`, `qa_to_done`)
+     - `task_pattern` (regex over title/description/spec path/workspace)
+     - `min_retries`
+     - `require_supervised`
+     - `require_plan_validation_pass`
+     - `require_qa_pass`
+
+3. **UI configuration surface**
+   - Add settings UI section for quality gates.
+   - Add enable toggle and JSON rule editor with examples/documented fields.
+
+4. **Test coverage**
+   - Add unit tests for rule parsing and transition gate evaluation behavior.
+
+### 11.3 Out-of-scope for this phase
+- Dedicated policy CRUD tables and versioned policy history.
+- Coverage/security scanner integrations for dynamic thresholds.
+- Per-team/project scoped policy sets and RBAC enforcement.
+
+### 11.4 Success criteria
+- Operators can define and save quality gate rules from settings.
+- Runs emit `quality_gate_result` events for evaluated transitions.
+- Runs fail early with explicit reasons when configured gate requirements are not met.

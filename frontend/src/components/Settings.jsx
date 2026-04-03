@@ -23,6 +23,8 @@ const DEFAULTS = {
   schedule_window_start: '22:00',
   schedule_window_end: '06:00',
   schedule_days: '0,1,2,3,4,5,6',
+  quality_gates_enabled: false,
+  quality_gate_rules: '[]',
 }
 
 export default function Settings() {
@@ -309,6 +311,41 @@ export default function Settings() {
                 </p>
               </>
             )}
+          </div>
+        </div>
+
+        {/* Quality gates */}
+        <div className="pt-2 border-t border-gray-700">
+          <p className="text-xs text-gray-500 uppercase tracking-wider mb-4">Pipeline Quality Gates</p>
+          <div className="space-y-4">
+            <Field label="Enable quality gates">
+              <Toggle
+                value={form.quality_gates_enabled}
+                onChange={(v) => set('quality_gates_enabled', v)}
+              />
+            </Field>
+
+            <Field label="Quality gate rules (JSON array)">
+              <textarea
+                className={`${input} min-h-[180px] font-mono`}
+                value={form.quality_gate_rules || '[]'}
+                onChange={(e) => set('quality_gate_rules', e.target.value)}
+                placeholder={`[
+  {
+    "name": "Require supervised auth tasks",
+    "enabled": true,
+    "on_transition": "plan_to_build",
+    "task_pattern": "backend/auth/",
+    "require_supervised": true,
+    "require_plan_validation_pass": true
+  }
+]`}
+              />
+            </Field>
+            <p className="text-xs text-gray-500">
+              Supported rule fields: <code>name</code>, <code>enabled</code>, <code>on_transition</code> (
+              <code>plan_to_build</code> or <code>qa_to_done</code>), <code>task_pattern</code> (regex), <code>min_retries</code>, <code>require_supervised</code>, <code>require_plan_validation_pass</code>, <code>require_qa_pass</code>.
+            </p>
           </div>
         </div>
 

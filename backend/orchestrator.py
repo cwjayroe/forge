@@ -108,6 +108,86 @@ def _is_valid_plan(plan_artifact: str) -> bool:
     return any(ind.lower() in plan_artifact.lower() for ind in indicators)
 
 
+def _parse_quality_gate_rules(raw_rules: str) -> list[dict]:
+    """Parse quality gate JSON configuration into a list of rule dicts."""
+    if not raw_rules:
+        return []
+    try:
+        parsed = json.loads(raw_rules)
+    except Exception:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _rule_matches_task(rule: dict, task: Task) -> bool:
+    """Return True when a quality-gate rule applies to this task."""
+    pattern = (rule.get("task_pattern") or "").strip()
+    if not pattern:
+        return True
+    haystack = "\n".join([
+        task.title or "",
+        task.description or "",
+        task.spec_path or "",
+        task.workspace or "",
+    ])
+    try:
+        return re.search(pattern, haystack, re.IGNORECASE) is not None
+    except re.error:
+        return False
+
+
+def _evaluate_quality_gates(
+    transition: str,
+    task: Task,
+    rules: list[dict],
+    context: Optional[dict] = None,
+) -> dict:
+    """Evaluate configured quality gates for a transition."""
+    context = context or {}
+    failures: list[dict] = []
+
+    for idx, rule in enumerate(rules, start=1):
+        if not isinstance(rule, dict):
+            continue
+        if not rule.get("enabled", True):
+            continue
+        if (rule.get("on_transition") or "plan_to_build") != transition:
+            continue
+        if not _rule_matches_task(rule, task):
+            continue
+
+        reasons = []
+        min_retries = rule.get("min_retries")
+        if min_retries is not None:
+            try:
+                if task.max_retries < int(min_retries):
+                    reasons.append(f"Task max_retries={task.max_retries} is below required minimum ({min_retries}).")
+            except (TypeError, ValueError):
+                reasons.append(f"Rule min_retries is invalid: {min_retries}")
+
+        if rule.get("require_supervised") and task.mode != "supervised":
+            reasons.append("Task mode must be supervised for this transition.")
+
+        if rule.get("require_plan_validation_pass") and not context.get("plan_validation_pass", False):
+            reasons.append("Plan validation must pass (VERDICT: PASS) before entering build.")
+
+        if rule.get("require_qa_pass") and not context.get("qa_passed", False):
+            reasons.append("QA verdict must be PASS before marking the run complete.")
+
+        if reasons:
+            failures.append({
+                "rule_name": rule.get("name") or f"Rule {idx}",
+                "on_transition": transition,
+                "reasons": reasons,
+            })
+
+    return {
+        "transition": transition,
+        "passed": len(failures) == 0,
+        "failures": failures,
+    }
+
+
 def _verify_build_changed(workspace: str) -> bool:
     """Return True if the build modified at least one file in the workspace."""
     try:
@@ -564,6 +644,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
     require_approval = settings.get("require_bash_approval", False)
     capture_baseline = settings.get("capture_test_baseline", True)
     max_builders = settings.get("max_concurrent_builders", 3)
+    quality_gates_enabled = settings.get("quality_gates_enabled", False)
+    quality_gate_rules = _parse_quality_gate_rules(settings.get("quality_gate_rules", "[]"))
 
     # Load skill (if any) for this task
     from .models import Skill as _Skill
@@ -972,6 +1054,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             engine=engine,
         )
 
+        plan_validation_pass = False
         if val_status != "completed":
             await on_event({"type": "text", "content": "Plan validation phase failed. Proceeding with plan as-is."})
         elif not val_artifact.strip().startswith("VERDICT: PASS"):
@@ -1035,8 +1118,22 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         "type": "text",
                         "content": "Plan still has issues after correction. Proceeding with best-effort plan.",
                     })
+                elif val_status2 == "completed" and val_artifact2.strip().startswith("VERDICT: PASS"):
+                    plan_validation_pass = True
         else:
+            plan_validation_pass = True
             await on_event({"type": "text", "content": "Plan validation passed."})
+
+        if quality_gates_enabled:
+            gate_result = _evaluate_quality_gates(
+                transition="plan_to_build",
+                task=task,
+                rules=quality_gate_rules,
+                context={"plan_validation_pass": plan_validation_pass},
+            )
+            await on_event({"type": "quality_gate_result", **gate_result})
+            if not gate_result["passed"]:
+                raise RuntimeError(f"Quality gate blocked transition plan_to_build: {gate_result['failures']}")
 
         # ================================================================
         # PHASE 1c: APPROVAL GATE (supervised mode only)
@@ -1459,9 +1556,21 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         else:
                             combined_build_summary += f"\n\n---\n\nQA Fix:\n{fix_artifact}"
 
+        if quality_gates_enabled:
+            gate_result = _evaluate_quality_gates(
+                transition="qa_to_done",
+                task=task,
+                rules=quality_gate_rules,
+                context={"qa_passed": qa_passed},
+            )
+            await on_event({"type": "quality_gate_result", **gate_result})
+            if not gate_result["passed"]:
+                qa_passed = False
+                qa_feedback = f"Quality gate blocked transition qa_to_done: {gate_result['failures']}"
+
         if not qa_passed:
             final_status = "failed"
-            error_msg = f"QA failed after {max_qa_cycles} cycles"
+            error_msg = qa_feedback or f"QA failed after {max_qa_cycles} cycles"
             summary = qa_feedback or ""
         else:
             final_status = "review" if task.mode == "supervised" else "completed"
