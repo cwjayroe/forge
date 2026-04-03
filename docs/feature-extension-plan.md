@@ -275,3 +275,42 @@ Phase 2 maps to **Phase A.2: Global search + filters across tasks/runs/events** 
 - Operators can narrow board tasks by text/status/mode in seconds.
 - API consumers can query paginated task/run/event search results with composable filters.
 - Existing board, run view, and task creation behavior remain intact with no migration needed.
+
+---
+
+## 10) Phase 3 Execution Plan (Implemented)
+
+Phase 3 maps to **Phase A.3: Rich failure summaries and actionable retry UX** and is scoped to make failed runs easier to triage and recover from directly in the run detail view.
+
+### 10.1 Functional goals
+- Add backend failure analysis metadata for failed runs (category, phase, root message, suggested actions).
+- Surface structured failure cards in `RunView` instead of raw errors only.
+- Add one-click retry actions:
+  - retry same config,
+  - retry with increased retries,
+  - retry with QA model switch,
+  - retry in supervised mode.
+
+### 10.2 Delivery slices
+1. **Failure analysis helpers**
+   - Add backend helpers to classify failures (test failure, missing dependency, permission, timeout, unknown).
+   - Build run-level failure metadata using run error, failed phase, and recent error events.
+
+2. **Run API response enrichment**
+   - Extend `/runs/{run_id}` to include `failure_metadata` when a run fails.
+   - Extend `/runs/search` items with lightweight `failure_category` for list-level filtering/diagnostics.
+
+3. **RunView actionable recovery UX**
+   - Render a failure summary panel for failed runs.
+   - Show category, failing phase, concise error message, and suggested next actions.
+   - Add one-click retry strategy buttons wired to task update + re-run flows.
+
+### 10.3 Out-of-scope for this phase
+- Persisting failure classifications as first-class DB columns.
+- Historical failure analytics aggregation/dashboard widgets.
+- Advanced retry policies (exponential backoff, automatic model routing).
+
+### 10.4 Success criteria
+- Operators can identify likely root-cause category from the run view in under 10 seconds.
+- Failed runs expose clear, actionable next steps without scanning the full event feed.
+- Operators can launch a guided retry strategy in one click from the failure panel.

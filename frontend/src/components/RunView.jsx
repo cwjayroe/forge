@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { abortRun, approveBash, getRun } from '../api'
+import { abortRun, approveBash, getRun, runTask, updateTask } from '../api'
 import useWebSocket from '../hooks/useWebSocket'
 import { useTasksContext } from '../TasksContext'
 
@@ -21,6 +21,7 @@ export default function RunView() {
   const [selectedFile, setSelectedFile] = useState(null)
   const [fileDiffs, setFileDiffs] = useState({})
   const [bashApproval, setBashApproval] = useState(null)
+  const [retrying, setRetrying] = useState(null)
 
   const feedBottomRef = useRef(null)
 
@@ -126,6 +127,29 @@ export default function RunView() {
     } catch (_) {}
   }
 
+  const handleRetry = async (strategy) => {
+    if (!task) return
+    setRetrying(strategy)
+    try {
+      if (strategy === 'increase_retries') {
+        await updateTask(task.id, { max_retries: (task.max_retries || 0) + 1 })
+      } else if (strategy === 'switch_qa_model') {
+        const fallback = task.qa_model && task.qa_model !== task.model
+          ? task.model
+          : 'claude-code/haiku'
+        await updateTask(task.id, { qa_model: fallback })
+      } else if (strategy === 'supervised_mode') {
+        await updateTask(task.id, { mode: 'supervised' })
+      }
+      const nextRun = await runTask(task.id)
+      navigate(`/runs/${nextRun.id}`)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setRetrying(null)
+    }
+  }
+
   const toggleExpand = (idx) => {
     setExpandedEvents((prev) => {
       const next = new Set(prev)
@@ -217,6 +241,14 @@ export default function RunView() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left: Event feed */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2 min-w-0">
+          {run?.status === 'failed' && run?.failure_metadata && (
+            <FailurePanel
+              failure={run.failure_metadata}
+              retrying={retrying}
+              onRetry={handleRetry}
+            />
+          )}
+
           {allEvents.length === 0 && !connected && (
             <p className="text-gray-500 text-sm">No events yet.</p>
           )}
@@ -306,6 +338,44 @@ export default function RunView() {
             {aborting ? 'Aborting…' : 'Abort'}
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+function FailurePanel({ failure, retrying, onRetry }) {
+  const actionMap = [
+    { key: 'same_config', label: 'Retry same config' },
+    { key: 'increase_retries', label: 'Increase retries' },
+    { key: 'switch_qa_model', label: 'Switch QA model' },
+    { key: 'supervised_mode', label: 'Use supervised mode' },
+  ]
+  return (
+    <div className="mb-4 border border-red-800/60 bg-red-950/40 rounded-lg p-4">
+      <p className="text-xs uppercase tracking-wider text-red-300 mb-1">Failure summary</p>
+      <p className="text-sm text-red-200 mb-2">
+        Category: <span className="font-semibold">{failure.category?.replaceAll('_', ' ') || 'unknown'}</span>
+        {failure.phase ? <span className="text-red-400"> · Phase: {failure.phase}</span> : null}
+      </p>
+      <p className="text-sm text-red-100 mb-3">{failure.message}</p>
+      {(failure.suggested_actions || []).length > 0 && (
+        <ul className="list-disc ml-5 text-xs text-red-100 space-y-1 mb-3">
+          {failure.suggested_actions.map((action) => (
+            <li key={action}>{action}</li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {actionMap.map((item) => (
+          <button
+            key={item.key}
+            disabled={Boolean(retrying)}
+            onClick={() => onRetry(item.key)}
+            className="px-2.5 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 border border-gray-700 disabled:opacity-60"
+          >
+            {retrying === item.key ? 'Retrying…' : item.label}
+          </button>
+        ))}
       </div>
     </div>
   )

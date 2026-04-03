@@ -67,6 +67,90 @@ def _parse_iso_datetime(raw: Optional[str], field_name: str) -> Optional[datetim
         raise HTTPException(400, f"Invalid {field_name}; expected ISO-8601 datetime") from exc
 
 
+def _categorize_failure(text: str) -> tuple[str, list[str]]:
+    haystack = (text or "").lower()
+    rules: list[tuple[str, tuple[str, ...], list[str]]] = [
+        (
+            "test_failure",
+            ("assert", "failed", "pytest", "test", "regression"),
+            [
+                "Inspect failing tests and stack traces for the first deterministic failure.",
+                "Add or update regression coverage before retrying.",
+                "Retry with the same configuration after addressing the failing test path.",
+            ],
+        ),
+        (
+            "missing_dependency",
+            ("module not found", "no module named", "importerror", "command not found", "dependency"),
+            [
+                "Install or pin the missing dependency in project manifests.",
+                "Re-run setup/bootstrap commands before retrying the task.",
+                "Retry with an increased retry budget if installs are flaky in CI.",
+            ],
+        ),
+        (
+            "permission",
+            ("permission denied", "not permitted", "operation not permitted", "eacces", "approval"),
+            [
+                "Review sandbox/approval settings for blocked commands.",
+                "Switch to supervised mode if approvals are expected during this run.",
+                "Retry once required permissions are granted.",
+            ],
+        ),
+        (
+            "timeout",
+            ("timeout", "timed out", "deadline exceeded"),
+            [
+                "Split the task scope into smaller batches to reduce long-running steps.",
+                "Increase retry budget to allow another execution attempt.",
+                "Retry with a lighter QA model if validation latency is the bottleneck.",
+            ],
+        ),
+    ]
+    for category, markers, actions in rules:
+        if any(marker in haystack for marker in markers):
+            return category, actions
+    return (
+        "unknown",
+        [
+            "Open the event log and inspect the latest error details.",
+            "Retry with supervised mode to monitor and guide agent actions.",
+            "Try a QA model switch if failures repeat with the same settings.",
+        ],
+    )
+
+
+def _build_failure_metadata(run: Run, phases: list[RunPhase], events: list[RunEvent]) -> Optional[dict]:
+    if run.status != "failed":
+        return None
+
+    last_failed_phase = next((p for p in reversed(phases) if p.status == "failed"), None)
+    recent_errors: list[str] = []
+    for event in reversed(events):
+        if event.type != "error":
+            continue
+        try:
+            payload = json.loads(event.content)
+        except Exception:
+            payload = event.content
+        if isinstance(payload, dict):
+            recent_errors.append(str(payload.get("content") or payload))
+        else:
+            recent_errors.append(str(payload))
+        if len(recent_errors) >= 3:
+            break
+
+    root_message = run.error or (last_failed_phase.error if last_failed_phase else "") or "\n".join(recent_errors)
+    category, suggested_actions = _categorize_failure(root_message)
+    return {
+        "category": category,
+        "phase": last_failed_phase.phase if last_failed_phase else run.current_phase,
+        "message": (root_message or "Run failed without a detailed error message.")[:1000],
+        "suggested_actions": suggested_actions,
+        "recent_errors": recent_errors,
+    }
+
+
 def _is_in_window(settings: dict) -> bool:
     """Return True if the current local time falls within the configured execution window."""
     from datetime import datetime as dt
@@ -754,7 +838,12 @@ def search_runs(
         query = query.order_by(Run.started_at.desc())
 
     rows = session.exec(query.offset(offset).limit(limit)).all()
-    items = [{**run.model_dump(), "task": task.model_dump()} for run, task in rows]
+    items = []
+    for run, task in rows:
+        failure_category = None
+        if run.status == "failed":
+            failure_category, _ = _categorize_failure(run.error or "")
+        items.append({**run.model_dump(), "task": task.model_dump(), "failure_category": failure_category})
     total = session.exec(count_query).one()
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
@@ -770,8 +859,10 @@ def get_run(run_id: str, session: Session = Depends(get_session)):
     phases = session.exec(
         select(RunPhase).where(RunPhase.run_id == run_id).order_by(RunPhase.started_at)
     ).all()
+    failure_metadata = _build_failure_metadata(run, phases, events)
     return {
         **run.model_dump(),
+        "failure_metadata": failure_metadata,
         "events": [
             {**e.model_dump(), "content": json.loads(e.content)}
             for e in events
