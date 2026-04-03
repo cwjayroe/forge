@@ -2,9 +2,31 @@
 
 This plan is based on the current architecture and UX surface in this repository (FastAPI + SQLModel backend orchestration, React task board/run view frontend, and skills/memory abstractions).
 
+## Implementation status snapshot (as of 2026-04-03)
+
+Legend:
+- ✅ Implemented
+- 🟡 Partially implemented
+- ⏳ Not implemented yet
+
+| Area | Status | Notes |
+|---|---|---|
+| 1.1 Task templates and presets | ✅ | DB model + CRUD API, built-in templates, task editor and board quick picker are in place. |
+| 1.2 Global search + filters | ✅ | `/tasks/search`, `/runs/search`, `/run-events/search` plus board-side search/filter UI and saved presets are implemented. |
+| 1.3 Failure summaries + guided retry UX | ✅ | Backend failure classification metadata and RunView failure/retry actions are implemented. |
+| 2.1 Pipeline policy engine (quality gates) | ✅ | Settings-backed rule engine and transition-time gate enforcement are implemented. |
+| 2.2 Multi-workspace projects + context packs | ⏳ | No `Project` abstraction or project-scoped context pack flow is present yet. |
+| 2.3 Native GitHub/GitLab integration | ✅ | Provider settings, PR/MR creation, and status lookup endpoints are implemented. |
+| 3.1 Durable queue + resumable orchestration | ⏳ | Runtime execution still depends on in-process orchestration state rather than a durable worker queue. |
+| 3.2 Observability dashboard + traces | ⏳ | No first-class metrics/tracing pipeline or analytics dashboard shipped yet. |
+| 3.3 Long-run streaming resilience | ⏳ | No cursor-based replay/`last_event_id` resume protocol implemented yet. |
+| 4.1 User accounts, RBAC, audit logs | ⏳ | Current model remains single-operator without authn/authz roles or immutable audit log subsystem. |
+| 4.2 Approval workflow improvements | 🟡 | Bash/plan approvals and notification webhooks exist, but assignable SLA/escalation workflows are not yet implemented. |
+| 4.3 Shared knowledge curation | ⏳ | Memory exists, but pinning/tagging/retention-confidence governance controls are not implemented yet. |
+
 ## 1) Immediate Usability Wins (High Impact, Low/Medium Effort)
 
-### 1.1 Task templates and presets
+### 1.1 Task templates and presets ✅ Implemented
 **Problem:** Creating high-quality tasks repeatedly is manual and error-prone.
 
 **Proposed feature:** Add first-class task templates that prefill title, description structure, model trio, retry count, mode, and optional dependency patterns.
@@ -18,7 +40,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 1.2 Global search + filters across tasks/runs/events
+### 1.2 Global search + filters across tasks/runs/events ✅ Implemented
 **Problem:** At scale, users cannot quickly find “the run that failed in QA yesterday” or “tasks touching file X”.
 
 **Proposed feature:** Search bar + filter chips (status, model/provider, date range, workspace, phase, failure-only).
@@ -32,7 +54,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 1.3 Rich failure summaries and actionable retry UX
+### 1.3 Rich failure summaries and actionable retry UX ✅ Implemented
 **Problem:** Failed runs are visible, but guidance for “what next” is limited.
 
 **Proposed feature:** Structured failure cards with root-cause category (test failure, lint, missing dep, permission, timeout), suggested next actions, and one-click retry strategies (same config, increase retries, switch QA model, supervised mode).
@@ -47,7 +69,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ## 2) Core Functionality Expansions (High Impact, Medium Effort)
 
-### 2.1 Pipeline policy engine (quality gates)
+### 2.1 Pipeline policy engine (quality gates) ✅ Implemented
 **Problem:** Current phases are fixed, but release-quality teams need policy controls.
 
 **Proposed feature:** Add configurable quality gates before transitioning phase/state.
@@ -64,7 +86,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 2.2 Multi-workspace projects + reusable context packs
+### 2.2 Multi-workspace projects + reusable context packs ⏳ Not implemented
 **Problem:** Tasks currently assume a single workspace path per task, making monorepo/multi-repo work clunky.
 
 **Proposed feature:** “Project” abstraction that can include multiple repositories/workspaces and shared context packs (architecture notes, coding standards, API contracts).
@@ -76,7 +98,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 2.3 Native GitHub/GitLab provider integration
+### 2.3 Native GitHub/GitLab provider integration ✅ Implemented
 **Problem:** Branch creation/commit exists, but remote collaboration flow is incomplete for teams.
 
 **Proposed feature:** Connect provider accounts for automatic push, PR/MR creation, reviewer assignment, label/rulesets, and status-sync back into Forge.
@@ -89,7 +111,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ## 3) Reliability + Scale Improvements (Medium/High Impact, Medium/High Effort)
 
-### 3.1 Durable job queue and resumable orchestration
+### 3.1 Durable job queue and resumable orchestration ⏳ Not implemented
 **Problem:** In-memory run state and WS listener bookkeeping are vulnerable to process restarts.
 
 **Proposed feature:** Durable queue with persisted run state machine and resumable execution semantics.
@@ -101,7 +123,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 3.2 Observability: metrics, traces, and run analytics dashboard
+### 3.2 Observability: metrics, traces, and run analytics dashboard ⏳ Not implemented
 **Problem:** Limited operational visibility into throughput, failure modes, model performance, and cost.
 
 **Proposed feature:** Add structured metrics and dashboards.
@@ -118,7 +140,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 3.3 Long-run streaming resilience
+### 3.3 Long-run streaming resilience ⏳ Not implemented
 **Problem:** Long runs can lose UI continuity on reconnect.
 
 **Proposed feature:** Cursor-based event streaming and replay with idempotent event IDs.
@@ -131,7 +153,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ## 4) Collaboration + Governance (Medium Impact, Medium Effort)
 
-### 4.1 User accounts, RBAC, and audit logs
+### 4.1 User accounts, RBAC, and audit logs ⏳ Not implemented
 **Problem:** Current setup is single-tenant/operator oriented.
 
 **Proposed feature:** Multi-user support with role-based permissions and immutable audit trails.
@@ -145,7 +167,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 4.2 Approval workflow improvements
+### 4.2 Approval workflow improvements 🟡 Partially implemented
 **Problem:** Approval exists for bash and plan, but approvals are minimal and not SLA-oriented.
 
 **Proposed feature:** Assignable approvals with timeout/escalation rules and context-rich diff/test snapshots.
@@ -156,7 +178,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ---
 
-### 4.3 Shared knowledge and memory curation
+### 4.3 Shared knowledge and memory curation ⏳ Not implemented
 **Problem:** Memory exists, but curation/quality controls are limited.
 
 **Proposed feature:** Memory pinning, tagging, decay/retention policies, and confidence scoring.
@@ -200,7 +222,7 @@ This plan is based on the current architecture and UX surface in this repository
 
 ## 7) Suggested Next Action
 
-Start with **Phase A** and implement **task templates** first; it has the best effort-to-value ratio and creates a reusable foundation for policy-driven and team-oriented workflows.
+Phases 1–5 are now implemented (A.1–A.3, B.1, B.2). The highest-impact next step is **Phase B.3 (approval workflow improvements)**, followed by **Phase C.1 (durable/resumable orchestration)** to improve operational safety and scale.
 
 ---
 
