@@ -11,7 +11,12 @@ Aligned with the feature-plan-and-build SKILL.md orchestration pattern:
 from datetime import datetime
 
 
-def _base_context(workspace: str, spec_content: str | None, memory_context: str) -> str:
+def _base_context(
+    workspace: str,
+    spec_content: str | None,
+    memory_context: str,
+    project_context: str = "",
+) -> str:
     parts = [
         f"Workspace: {workspace}",
         f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}",
@@ -20,6 +25,8 @@ def _base_context(workspace: str, spec_content: str | None, memory_context: str)
         parts.append(f"\n## Spec / PRD\n{spec_content}")
     if memory_context:
         parts.append(f"\n## Relevant Context from Memory\n{memory_context}")
+    if project_context:
+        parts.append(f"\n## Project Context\n{project_context}")
     return "\n".join(parts)
 
 
@@ -32,8 +39,9 @@ def plan_prompt(
     spec_content: str | None = None,
     memory_context: str = "",
     upstream_context: str = "",
+    project_context: str = "",
 ) -> str:
-    base = _base_context(workspace, spec_content, memory_context)
+    base = _base_context(workspace, spec_content, memory_context, project_context=project_context)
     parts = [
         "You are a **planning agent**. Your job is to deeply analyze the codebase and produce "
         "a structured, phased implementation plan with enriched task specs. Do NOT make any code changes.",
@@ -292,8 +300,9 @@ def validator_prompt(
     plan_artifact: str,
     spec_content: str | None = None,
     memory_context: str = "",
+    project_context: str = "",
 ) -> str:
-    base = _base_context(workspace, spec_content, memory_context)
+    base = _base_context(workspace, spec_content, memory_context, project_context=project_context)
     parts = [
         "You are a **plan validator agent**. Your job is to validate the implementation plan "
         "for internal consistency before building begins. This is a lightweight, fast check — "
@@ -378,12 +387,13 @@ def build_prompt(
     spec_content: str | None = None,
     memory_context: str = "",
     upstream_context: str = "",
+    project_context: str = "",
     qa_feedback: str | None = None,
     task_spec: str | None = None,
     architecture_snapshot: str | None = None,
     review_feedback: str | None = None,
 ) -> str:
-    base = _base_context(workspace, spec_content, memory_context)
+    base = _base_context(workspace, spec_content, memory_context, project_context=project_context)
     parts = [
         "You are a **builder agent**. Your job is to execute the implementation plan "
         "precisely by making code changes in the workspace.",
@@ -476,8 +486,9 @@ def reviewer_prompt(
     architecture_snapshot: str | None = None,
     spec_content: str | None = None,
     memory_context: str = "",
+    project_context: str = "",
 ) -> str:
-    base = _base_context(workspace, spec_content, memory_context)
+    base = _base_context(workspace, spec_content, memory_context, project_context=project_context)
     files_list = "\n".join(f"- {f}" for f in touched_files)
     parts = [
         "You are a **reviewer agent**. Your job is to review a batch of file changes for "
@@ -577,8 +588,9 @@ def qa_prompt(
     spec_content: str | None = None,
     memory_context: str = "",
     test_baseline: str | None = None,
+    project_context: str = "",
 ) -> str:
-    base = _base_context(workspace, spec_content, memory_context)
+    base = _base_context(workspace, spec_content, memory_context, project_context=project_context)
     parts = [
         "You are a **QA agent**. Your job is to perform end-to-end quality assurance on the "
         "completed build. You go beyond basic review to run tests, check coverage, validate "

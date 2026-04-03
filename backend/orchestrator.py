@@ -35,7 +35,7 @@ from .agent.prompts import (
     validator_prompt,
 )
 from .memory import MemoryClient
-from .models import Run, RunEvent, RunPhase, Task
+from .models import ContextPack, Project, Run, RunEvent, RunPhase, Task
 from .providers import ProviderIntegrationError, create_change_request
 
 if TYPE_CHECKING:
@@ -697,6 +697,30 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
         with Session(engine) as session:
             skill = session.get(_Skill, task.skill_id)
 
+    project_context = ""
+    if task.project_id:
+        with Session(engine) as session:
+            project = session.get(Project, task.project_id)
+            if project:
+                packs = session.exec(
+                    select(ContextPack).where(ContextPack.project_id == project.id).order_by(ContextPack.created_at.asc())
+                ).all()
+                pack_sections = []
+                for pack in packs:
+                    if pack.workspace_hint and pack.workspace_hint != task.workspace:
+                        continue
+                    pack_sections.append(
+                        f"### Context Pack: {pack.name}\n"
+                        f"Workspace Hint: {pack.workspace_hint or '(all workspaces)'}\n"
+                        f"{pack.content}"
+                    )
+                if pack_sections:
+                    project_context = (
+                        f"## Project\nName: {project.name}\nDescription: {project.description or 'N/A'}\n\n"
+                        "## Project Context Packs\n"
+                        + "\n\n".join(pack_sections)
+                    )
+
     # Build approval gate for bash commands
     async def bash_gate(command: str) -> bool:
         event = asyncio.Event()
@@ -738,6 +762,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
         full_description = task.description
         if spec_content:
             full_description += f"\n\n## Spec / PRD\n{spec_content}"
+        if project_context:
+            full_description += f"\n\n{project_context}"
 
         with Session(engine) as session:
             db_task = session.get(Task, task.id)
@@ -841,6 +867,8 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
         full_description = task.description
         if spec_content:
             full_description += f"\n\n## Spec / PRD\n{spec_content}"
+        if project_context:
+            full_description += f"\n\n{project_context}"
 
         with Session(engine) as session:
             db_task = session.get(Task, task.id)
@@ -1014,6 +1042,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             spec_content=spec_content,
             memory_context=memory_context,
             upstream_context=upstream_context,
+            project_context=project_context,
         )
         plan_status, plan_artifact = await _run_single_phase(
             run_id=run_id,
@@ -1044,6 +1073,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 spec_content=spec_content,
                 memory_context=memory_context,
                 upstream_context=upstream_context,
+                project_context=project_context,
             )
             plan_sys_retry += (
                 "\n\n## CRITICAL CORRECTION\n"
@@ -1081,6 +1111,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
             plan_artifact=plan_artifact,
             spec_content=spec_content,
             memory_context=memory_context,
+            project_context=project_context,
         )
         val_status, val_artifact = await _run_single_phase(
             run_id=run_id,
@@ -1109,6 +1140,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 spec_content=spec_content,
                 memory_context=memory_context,
                 upstream_context=upstream_context,
+                project_context=project_context,
             )
             # Append validation feedback
             plan_sys_v2 += (
@@ -1140,6 +1172,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                     plan_artifact=plan_artifact,
                     spec_content=spec_content,
                     memory_context=memory_context,
+                    project_context=project_context,
                 )
                 val_status2, val_artifact2 = await _run_single_phase(
                     run_id=run_id,
@@ -1236,6 +1269,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                     spec_content=spec_content,
                     memory_context=memory_context,
                     upstream_context=upstream_context,
+                    project_context=project_context,
                     task_spec=phase.get("raw", ""),
                     architecture_snapshot=architecture_snapshot,
                 )
@@ -1286,6 +1320,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         spec_content=spec_content,
                         memory_context=memory_context,
                         upstream_context=upstream_context,
+                        project_context=project_context,
                         qa_feedback=no_change_feedback,
                         task_spec=phase.get("raw", ""),
                         architecture_snapshot=architecture_snapshot,
@@ -1339,6 +1374,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         spec_content=spec_content,
                         memory_context=memory_context,
                         upstream_context=upstream_context,
+                        project_context=project_context,
                         task_spec=task_spec_str,
                         architecture_snapshot=architecture_snapshot,
                     )
@@ -1414,6 +1450,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         architecture_snapshot=architecture_snapshot,
                         spec_content=spec_content,
                         memory_context=memory_context,
+                        project_context=project_context,
                     )
                     rev_status, rev_artifact = await _run_single_phase(
                         run_id=run_id,
@@ -1445,6 +1482,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                                 spec_content=spec_content,
                                 memory_context=memory_context,
                                 upstream_context=upstream_context,
+                                project_context=project_context,
                                 review_feedback=rev_artifact,
                                 architecture_snapshot=architecture_snapshot,
                             )
@@ -1478,6 +1516,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                                 architecture_snapshot=architecture_snapshot,
                                 spec_content=spec_content,
                                 memory_context=memory_context,
+                                project_context=project_context,
                             )
                             rev_status2, rev_artifact2 = await _run_single_phase(
                                 run_id=run_id,
@@ -1530,6 +1569,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                 spec_content=spec_content,
                 memory_context=memory_context,
                 test_baseline=test_baseline,
+                project_context=project_context,
             )
             qa_status, qa_artifact = await _run_single_phase(
                 run_id=run_id,
@@ -1573,6 +1613,7 @@ async def _run_task_phases(run_id: str, task: Task, engine) -> None:
                         spec_content=spec_content,
                         memory_context=memory_context,
                         upstream_context=upstream_context,
+                        project_context=project_context,
                         qa_feedback=qa_feedback,
                         architecture_snapshot=architecture_snapshot,
                     )

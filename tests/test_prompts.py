@@ -209,6 +209,12 @@ def test_plan_prompt_includes_upstream_context():
     assert "Auth" in result
 
 
+def test_plan_prompt_includes_project_context():
+    result = plan_prompt(workspace="/app", project_context="## Project\nName: Forge")
+    assert "Project Context" in result
+    assert "Name: Forge" in result
+
+
 # ---------------------------------------------------------------------------
 # build_prompt — new parameters
 # ---------------------------------------------------------------------------
@@ -255,6 +261,12 @@ def test_build_prompt_enriched_fields_mentioned():
     assert "interface_contract" in result
     assert "preserve" in result
     assert "pattern_reference" in result
+
+
+def test_build_prompt_includes_project_context():
+    result = build_prompt(workspace="/app", plan_artifact="plan", project_context="Use coding standard X")
+    assert "Project Context" in result
+    assert "coding standard X" in result
 
 
 # ---------------------------------------------------------------------------

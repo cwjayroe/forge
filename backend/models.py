@@ -44,6 +44,7 @@ class Task(SQLModel, table=True):
     qa_model: Optional[str] = None                     # QA phase model (falls back to model)
     max_retries: int = 3                               # max build→QA retry cycles
     workspace: str
+    project_id: Optional[str] = None                # FK to Project.id
     order: int = 0
     branch_name: Optional[str] = None                 # git branch created for this task
     skill_id: Optional[str] = None                    # FK to Skill.id
@@ -64,6 +65,26 @@ class TaskTemplate(SQLModel, table=True):
     max_retries: int = 3
     depends_on: Optional[str] = None
     is_builtin: bool = False
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class Project(SQLModel, table=True):
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    name: str
+    slug: str
+    description: str = ""
+    workspaces: str = "[]"   # JSON list[str]
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class ContextPack(SQLModel, table=True):
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    project_id: str
+    name: str
+    content: str
+    workspace_hint: Optional[str] = None  # optional workspace path this context targets
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -119,6 +140,7 @@ class TaskCreate(BaseModel):
     qa_model: Optional[str] = None
     max_retries: int = 3
     workspace: str
+    project_id: Optional[str] = None
     depends_on: Optional[str] = None
     skill_id: Optional[str] = None
 
@@ -134,8 +156,34 @@ class TaskUpdate(BaseModel):
     qa_model: Optional[str] = None
     max_retries: Optional[int] = None
     workspace: Optional[str] = None
+    project_id: Optional[str] = None
     depends_on: Optional[str] = None
     skill_id: Optional[str] = None
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    slug: str
+    description: str = ""
+    workspaces: list[str] = []
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    workspaces: Optional[list[str]] = None
+
+
+class ContextPackCreate(BaseModel):
+    name: str
+    content: str
+    workspace_hint: Optional[str] = None
+
+
+class ContextPackUpdate(BaseModel):
+    name: Optional[str] = None
+    content: Optional[str] = None
+    workspace_hint: Optional[str] = None
 
 
 class SkillCreate(BaseModel):
