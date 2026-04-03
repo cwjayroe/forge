@@ -237,3 +237,41 @@ Phase 1 maps to **Phase A.1: Task templates and presets** and is intentionally s
 - Operators can create new tasks from built-in templates in <= 2 clicks from board.
 - API consumers can list/create/update/delete templates.
 - Existing task creation/edit flows continue to work unchanged when no template is chosen.
+
+---
+
+## 9) Phase 2 Execution Plan (Implemented)
+
+Phase 2 maps to **Phase A.2: Global search + filters across tasks/runs/events** and is scoped to improve discoverability while preserving existing task/run workflows.
+
+### 9.1 Functional goals
+- Add backend search endpoints with filter/pagination controls for tasks, runs, and run events.
+- Support common operator filters: free-text, status, mode/phase, date range, failure-only, workspace.
+- Add board-level search/filter controls with lightweight saved presets for repeated queries.
+- Keep existing `/tasks` and `/runs` APIs backward-compatible for current UI consumers.
+
+### 9.2 Delivery slices
+1. **Search APIs**
+   - Add `/tasks/search` endpoint with text, status, mode, workspace, date range, sort, and pagination.
+   - Add `/runs/search` endpoint with task join metadata plus status/phase/workspace/date filters.
+   - Add `/run-events/search` endpoint with run/task joins, type/date filters, and text query over event payloads.
+   - Add consistent validation for ISO-8601 datetimes and limit/offset guardrails.
+
+2. **Frontend board discoverability**
+   - Add search bar + filter chips/dropdowns in `TaskBoard` (status, mode, sort).
+   - Add “Save preset” and quick preset re-apply powered by localStorage.
+   - Keep DnD reorder behavior safe with filtered board views.
+
+3. **Client API utilities**
+   - Add frontend API wrappers for task/run/event search endpoints.
+   - Add query-string builder helper for consistent parameter encoding.
+
+### 9.3 Out-of-scope for this phase
+- Dedicated global “search page” spanning tasks, runs, and events in one unified UI.
+- Server-side persisted filter presets shared across users/environments.
+- Advanced sorting (duration/failure-rate aggregations) and full-text indexing optimization.
+
+### 9.4 Success criteria
+- Operators can narrow board tasks by text/status/mode in seconds.
+- API consumers can query paginated task/run/event search results with composable filters.
+- Existing board, run view, and task creation behavior remain intact with no migration needed.
