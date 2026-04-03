@@ -29,6 +29,9 @@ from .models import (
     Task,
     TaskCreate,
     TaskReorder,
+    TaskTemplate,
+    TaskTemplateCreate,
+    TaskTemplateUpdate,
     TaskUpdate,
 )
 from .orchestrator import abort_run, deregister_ws_listener, is_pipeline_paused, is_window_paused, register_ws_listener, resolve_bash_approval, resolve_plan_approval, set_window_paused, start_run
@@ -170,6 +173,109 @@ _BUILTIN_SKILLS = [
     },
 ]
 
+_BUILTIN_TASK_TEMPLATES = [
+    {
+        "slug": "bugfix",
+        "name": "Bugfix",
+        "title_template": "Fix: <bug summary>",
+        "description_template": (
+            "## Goal\n"
+            "Fix the reported bug and confirm behavior is corrected.\n\n"
+            "## Context\n"
+            "- Symptom:\n"
+            "- Suspected area:\n"
+            "- Repro steps:\n\n"
+            "## Acceptance Criteria\n"
+            "- [ ] Root cause identified\n"
+            "- [ ] Fix implemented\n"
+            "- [ ] Regression coverage added/updated\n"
+        ),
+        "mode": "autonomous",
+        "model": "claude-code/sonnet",
+        "max_retries": 3,
+        "is_builtin": True,
+    },
+    {
+        "slug": "test-writing",
+        "name": "Test Writing",
+        "title_template": "Add tests: <target area>",
+        "description_template": (
+            "## Goal\n"
+            "Add focused tests that validate expected behavior and edge cases.\n\n"
+            "## Scope\n"
+            "- Target modules/files:\n"
+            "- Existing gaps:\n\n"
+            "## Acceptance Criteria\n"
+            "- [ ] New tests are deterministic\n"
+            "- [ ] Edge cases covered\n"
+            "- [ ] Existing suite remains green\n"
+        ),
+        "mode": "autonomous",
+        "model": "claude-code/sonnet",
+        "max_retries": 2,
+        "is_builtin": True,
+    },
+    {
+        "slug": "refactor",
+        "name": "Refactor",
+        "title_template": "Refactor: <module/component>",
+        "description_template": (
+            "## Goal\n"
+            "Improve code structure/readability without changing behavior.\n\n"
+            "## Constraints\n"
+            "- Preserve public APIs\n"
+            "- Avoid behavior changes\n\n"
+            "## Acceptance Criteria\n"
+            "- [ ] Duplication reduced\n"
+            "- [ ] Complexity reduced\n"
+            "- [ ] Tests confirm no regressions\n"
+        ),
+        "mode": "supervised",
+        "model": "claude-code/sonnet",
+        "max_retries": 2,
+        "is_builtin": True,
+    },
+    {
+        "slug": "docs",
+        "name": "Docs",
+        "title_template": "Docs: <topic>",
+        "description_template": (
+            "## Goal\n"
+            "Improve documentation clarity and completeness.\n\n"
+            "## Targets\n"
+            "- README sections:\n"
+            "- API docs/docstrings:\n"
+            "- Developer guidance:\n\n"
+            "## Acceptance Criteria\n"
+            "- [ ] Docs reflect current behavior\n"
+            "- [ ] Examples are accurate\n"
+            "- [ ] Links/paths validated\n"
+        ),
+        "mode": "autonomous",
+        "model": "claude-code/haiku",
+        "max_retries": 1,
+        "is_builtin": True,
+    },
+    {
+        "slug": "security-audit",
+        "name": "Security Audit",
+        "title_template": "Security audit: <area>",
+        "description_template": (
+            "## Goal\n"
+            "Audit selected scope for security weaknesses and produce findings.\n\n"
+            "## Scope\n"
+            "- In-scope paths/services:\n"
+            "- Out-of-scope areas:\n\n"
+            "## Deliverable\n"
+            "Structured report with severity, location, impact, and remediation guidance.\n"
+        ),
+        "mode": "supervised",
+        "model": "claude-code/opus",
+        "max_retries": 1,
+        "is_builtin": True,
+    },
+]
+
 
 @app.on_event("startup")
 async def on_startup():
@@ -185,6 +291,9 @@ async def on_startup():
         for data in _BUILTIN_SKILLS:
             if not session.exec(select(Skill).where(Skill.slug == data["slug"])).first():
                 session.add(Skill(**data))
+        for data in _BUILTIN_TASK_TEMPLATES:
+            if not session.exec(select(TaskTemplate).where(TaskTemplate.slug == data["slug"])).first():
+                session.add(TaskTemplate(**data))
         session.commit()
     asyncio.create_task(_window_checker_loop())
 
@@ -320,6 +429,54 @@ def discover_cli_skills(workspace: str = ""):
 
 
 # ===========================================================================
+# Task templates
+# ===========================================================================
+
+@app.get("/task-templates")
+def list_task_templates(session: Session = Depends(get_session)):
+    return session.exec(
+        select(TaskTemplate).order_by(TaskTemplate.is_builtin.desc(), TaskTemplate.name)
+    ).all()
+
+
+@app.post("/task-templates", status_code=201)
+def create_task_template(payload: TaskTemplateCreate, session: Session = Depends(get_session)):
+    existing = session.exec(select(TaskTemplate).where(TaskTemplate.slug == payload.slug)).first()
+    if existing:
+        raise HTTPException(400, f"Task template with slug '{payload.slug}' already exists")
+    tpl = TaskTemplate(**payload.model_dump())
+    session.add(tpl)
+    session.commit()
+    session.refresh(tpl)
+    return tpl
+
+
+@app.put("/task-templates/{template_id}")
+def update_task_template(template_id: str, payload: TaskTemplateUpdate, session: Session = Depends(get_session)):
+    tpl = session.get(TaskTemplate, template_id)
+    if not tpl:
+        raise HTTPException(404, "Task template not found")
+    for k, v in payload.model_dump(exclude_none=True).items():
+        setattr(tpl, k, v)
+    tpl.updated_at = datetime.utcnow()
+    session.add(tpl)
+    session.commit()
+    session.refresh(tpl)
+    return tpl
+
+
+@app.delete("/task-templates/{template_id}", status_code=204)
+def delete_task_template(template_id: str, session: Session = Depends(get_session)):
+    tpl = session.get(TaskTemplate, template_id)
+    if not tpl:
+        raise HTTPException(404, "Task template not found")
+    if tpl.is_builtin:
+        raise HTTPException(400, "Cannot delete built-in task template")
+    session.delete(tpl)
+    session.commit()
+
+
+# ===========================================================================
 # Tasks
 # ===========================================================================
 
@@ -342,6 +499,7 @@ def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
         max_retries=payload.max_retries,
         workspace=payload.workspace,
         depends_on=payload.depends_on,
+        skill_id=payload.skill_id,
     )
 
     # Validate dependencies won't create cycles
