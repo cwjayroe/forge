@@ -1096,6 +1096,12 @@ def get_settings_endpoint():
 
 @app.put("/settings")
 def update_settings(payload: Settings):
+    try:
+        parsed_rules = json.loads(payload.quality_gate_rules or "[]")
+        if not isinstance(parsed_rules, list):
+            raise ValueError("quality_gate_rules must decode to a JSON array")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid quality_gate_rules JSON: {exc}") from exc
     save_settings(payload.model_dump())
     return payload
 

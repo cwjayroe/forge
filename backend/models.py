@@ -212,3 +212,5 @@ class Settings(BaseModel):
     schedule_window_start: str = "22:00"   # 24h HH:MM, local server time
     schedule_window_end: str = "06:00"     # 24h HH:MM — can cross midnight
     schedule_days: str = "0,1,2,3,4,5,6"  # comma-separated 0=Mon…6=Sun
+    quality_gates_enabled: bool = False
+    quality_gate_rules: str = "[]"
