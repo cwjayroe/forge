@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getSettings, getSkills, listTemplates, searchMemory, updateTask } from '../api'
+import { createTask, getSettings, getSkills, getTaskTemplates, listTemplates, searchMemory, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -29,7 +29,7 @@ const EMPTY = {
   skill_id: null,
 }
 
-export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
+export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, onSaved }) {
   const { tasks } = useTasksContext()
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
@@ -37,12 +37,15 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
   const [memoryPreview, setMemoryPreview] = useState([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [templates, setTemplates] = useState([])
+  const [taskTemplates, setTaskTemplates] = useState([])
   const [showTemplates, setShowTemplates] = useState(false)
+  const [showTaskTemplates, setShowTaskTemplates] = useState(false)
   const [skills, setSkills] = useState([])
   const overlayRef = useRef(null)
 
   // Load skills on mount
   useEffect(() => { getSkills().then(setSkills).catch(() => {}) }, [])
+  useEffect(() => { getTaskTemplates().then(setTaskTemplates).catch(() => {}) }, [])
 
   // Populate form on open
   useEffect(() => {
@@ -77,16 +80,26 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
     } else {
       // Load defaults from settings for create mode
       getSettings().then((s) => {
-        setForm((f) => ({
+        const next = {
           ...EMPTY,
           workspace: s.workspace || '',
           model: s.default_model || MODEL_OPTIONS[0],
           plan_model: s.default_plan_model || '',
           qa_model: s.default_qa_model || '',
-        }))
+        }
+        if (initialTemplate) {
+          next.title = initialTemplate.title_template || ''
+          next.description = initialTemplate.description_template || ''
+          next.mode = initialTemplate.mode || next.mode
+          next.model = initialTemplate.model || next.model
+          next.plan_model = initialTemplate.plan_model || ''
+          next.qa_model = initialTemplate.qa_model || ''
+          next.max_retries = initialTemplate.max_retries ?? next.max_retries
+        }
+        setForm(next)
       }).catch(() => {})
     }
-  }, [task, cloneFrom])
+  }, [task, cloneFrom, initialTemplate])
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
 
@@ -116,6 +129,20 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
   const applyTemplate = (tpl) => {
     setForm((f) => ({ ...f, title: tpl.title, description: tpl.content }))
     setShowTemplates(false)
+  }
+  const applyTaskTemplate = (tpl) => {
+    setForm((f) => ({
+      ...f,
+      title: tpl.title_template || '',
+      description: tpl.description_template || '',
+      mode: tpl.mode || f.mode,
+      model: tpl.model || f.model,
+      plan_model: tpl.plan_model || '',
+      qa_model: tpl.qa_model || '',
+      max_retries: tpl.max_retries ?? f.max_retries,
+      depends_on: tpl.depends_on ? tpl.depends_on.split(',').filter(Boolean) : [],
+    }))
+    setShowTaskTemplates(false)
   }
 
   const toggleDep = (taskId) => {
@@ -184,28 +211,64 @@ export default function TaskEditor({ task, cloneFrom, onClose, onSaved }) {
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-sm text-gray-400">Title *</label>
-              {templates.length > 0 && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowTemplates((v) => !v)}
-                    className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
-                  >
-                    Load from file…
-                  </button>
-                  {showTemplates && (
-                    <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[200px] max-h-48 overflow-y-auto">
-                      {templates.map((tpl) => (
-                        <button
-                          key={tpl.path}
-                          type="button"
-                          onClick={() => applyTemplate(tpl)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
-                        >
-                          <span className="block text-gray-200 truncate">{tpl.title}</span>
-                          <span className="block text-gray-500 truncate">{tpl.name}</span>
-                        </button>
-                      ))}
+              {(templates.length > 0 || taskTemplates.length > 0) && (
+                <div className="flex items-center gap-2">
+                  {taskTemplates.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTaskTemplates((v) => !v)
+                          setShowTemplates(false)
+                        }}
+                        className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                      >
+                        Create from template…
+                      </button>
+                      {showTaskTemplates && (
+                        <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[220px] max-h-56 overflow-y-auto">
+                          {taskTemplates.map((tpl) => (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              onClick={() => applyTaskTemplate(tpl)}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
+                            >
+                              <span className="block text-gray-200 truncate">{tpl.name}</span>
+                              <span className="block text-gray-500 truncate">{tpl.title_template}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {templates.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTemplates((v) => !v)
+                          setShowTaskTemplates(false)
+                        }}
+                        className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                      >
+                        Load from file…
+                      </button>
+                      {showTemplates && (
+                        <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[200px] max-h-48 overflow-y-auto">
+                          {templates.map((tpl) => (
+                            <button
+                              key={tpl.path}
+                              type="button"
+                              onClick={() => applyTemplate(tpl)}
+                              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
+                            >
+                              <span className="block text-gray-200 truncate">{tpl.title}</span>
+                              <span className="block text-gray-500 truncate">{tpl.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

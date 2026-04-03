@@ -201,3 +201,39 @@ This plan is based on the current architecture and UX surface in this repository
 ## 7) Suggested Next Action
 
 Start with **Phase A** and implement **task templates** first; it has the best effort-to-value ratio and creates a reusable foundation for policy-driven and team-oriented workflows.
+
+---
+
+## 8) Phase 1 Execution Plan (Implemented)
+
+Phase 1 maps to **Phase A.1: Task templates and presets** and is intentionally scoped to deliver immediate value without blocking future Phase A.2/A.3 work.
+
+### 8.1 Functional goals
+- Add first-class, DB-backed task templates.
+- Ship built-in presets for: bugfix, test-writing, refactor, docs, security audit.
+- Support “create from template” in the task editor.
+- Add a quick template picker on the board for fast task creation.
+
+### 8.2 Delivery slices
+1. **Data model + API**
+   - Add `TaskTemplate` SQLModel table with configuration fields mirroring task creation.
+   - Add CRUD endpoints (`/task-templates`) and uniqueness guard on `slug`.
+   - Seed built-in templates at backend startup (idempotent by slug).
+
+2. **Task creation integration**
+   - Extend editor load path to apply template defaults (title, description, mode, model trio, retries, dependencies).
+   - Preserve existing support for file-based markdown templates.
+
+3. **Board usability**
+   - Add top-level “Use Template” quick picker next to “New Task”.
+   - Open editor prefilled from selected template for final review before save.
+
+### 8.3 Out-of-scope for this phase
+- Template management UI (create/edit/delete screens).
+- Template sharing/import-export across environments.
+- Advanced dependency macros/pattern expansion.
+
+### 8.4 Success criteria
+- Operators can create new tasks from built-in templates in <= 2 clicks from board.
+- API consumers can list/create/update/delete templates.
+- Existing task creation/edit flows continue to work unchanged when no template is chosen.

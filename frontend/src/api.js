@@ -62,6 +62,10 @@ export const approveBash = (runId, approved) =>
 // Templates
 export const listTemplates = (path) =>
   apiFetch(`/templates?path=${encodeURIComponent(path)}`)
+export const getTaskTemplates = () => apiFetch('/task-templates')
+export const createTaskTemplate = (body) => apiFetch('/task-templates', { method: 'POST', body })
+export const updateTaskTemplate = (id, body) => apiFetch(`/task-templates/${id}`, { method: 'PUT', body })
+export const deleteTaskTemplate = (id) => apiFetch(`/task-templates/${id}`, { method: 'DELETE' })
 
 // Pipeline
 export const startPipeline = () => apiFetch('/pipeline/start', { method: 'POST' })

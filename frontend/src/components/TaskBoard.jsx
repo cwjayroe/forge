@@ -14,7 +14,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { deleteTask, getRuns, getPipelineStatus, pausePipeline, reorderTasks, resumePipeline, runTask, startPipeline } from '../api'
+import { deleteTask, getRuns, getPipelineStatus, getTaskTemplates, pausePipeline, reorderTasks, resumePipeline, runTask, startPipeline } from '../api'
 import { useTasksContext } from '../TasksContext'
 import TaskEditor from './TaskEditor'
 
@@ -37,6 +37,9 @@ export default function TaskBoard() {
   const [showEditor, setShowEditor] = useState(false)
   const [editingTask, setEditingTask] = useState(null)
   const [cloningFrom, setCloningFrom] = useState(null)
+  const [selectedTemplate, setSelectedTemplate] = useState(null)
+  const [taskTemplates, setTaskTemplates] = useState([])
+  const [showTemplatePicker, setShowTemplatePicker] = useState(false)
   const [actionError, setActionError] = useState(null)
   const [pipelineStatus, setPipelineStatus] = useState(null)
   const [pipelineActing, setPipelineActing] = useState(false)
@@ -48,6 +51,9 @@ export default function TaskBoard() {
     fetch()
     const id = setInterval(fetch, 3000)
     return () => clearInterval(id)
+  }, [])
+  useEffect(() => {
+    getTaskTemplates().then(setTaskTemplates).catch(() => setTaskTemplates([]))
   }, [])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -124,6 +130,15 @@ export default function TaskBoard() {
   const handleNew = () => {
     setEditingTask(null)
     setCloningFrom(null)
+    setSelectedTemplate(null)
+    setShowEditor(true)
+  }
+
+  const handleNewFromTemplate = (template) => {
+    setEditingTask(null)
+    setCloningFrom(null)
+    setSelectedTemplate(template)
+    setShowTemplatePicker(false)
     setShowEditor(true)
   }
 
@@ -137,6 +152,7 @@ export default function TaskBoard() {
     setShowEditor(false)
     setEditingTask(null)
     setCloningFrom(null)
+    setSelectedTemplate(null)
     refresh()
   }
 
@@ -204,6 +220,31 @@ export default function TaskBoard() {
           >
             + New Task
           </button>
+          {taskTemplates.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowTemplatePicker((v) => !v)}
+                className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+              >
+                Use Template
+              </button>
+              {showTemplatePicker && (
+                <div className="absolute right-0 top-10 z-10 min-w-[240px] max-h-64 overflow-y-auto rounded border border-gray-600 bg-gray-800 shadow-xl">
+                  {taskTemplates.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => handleNewFromTemplate(tpl)}
+                      className="w-full text-left px-3 py-2 hover:bg-gray-700 transition-colors"
+                    >
+                      <p className="text-sm text-gray-100">{tpl.name}</p>
+                      <p className="text-xs text-gray-400 truncate">{tpl.title_template}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -269,7 +310,13 @@ export default function TaskBoard() {
         <TaskEditor
           task={editingTask}
           cloneFrom={cloningFrom}
-          onClose={() => { setShowEditor(false); setEditingTask(null); setCloningFrom(null) }}
+          initialTemplate={selectedTemplate}
+          onClose={() => {
+            setShowEditor(false)
+            setEditingTask(null)
+            setCloningFrom(null)
+            setSelectedTemplate(null)
+          }}
           onSaved={handleSaved}
         />
       )}

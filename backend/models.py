@@ -51,6 +51,23 @@ class Task(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class TaskTemplate(SQLModel, table=True):
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    name: str
+    slug: str
+    title_template: str
+    description_template: str
+    mode: str = "autonomous"
+    model: str = "ollama/qwen2.5-coder:latest"
+    plan_model: Optional[str] = None
+    qa_model: Optional[str] = None
+    max_retries: int = 3
+    depends_on: Optional[str] = None
+    is_builtin: bool = False
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class Run(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
     task_id: str
@@ -140,6 +157,31 @@ class SkillUpdate(BaseModel):
     claude_code_skill: Optional[str] = None
     cursor_skill: Optional[str] = None
     template_description: Optional[str] = None
+
+
+class TaskTemplateCreate(BaseModel):
+    name: str
+    slug: str
+    title_template: str
+    description_template: str
+    mode: str = "autonomous"
+    model: str = "ollama/qwen2.5-coder:latest"
+    plan_model: Optional[str] = None
+    qa_model: Optional[str] = None
+    max_retries: int = 3
+    depends_on: Optional[str] = None
+
+
+class TaskTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    title_template: Optional[str] = None
+    description_template: Optional[str] = None
+    mode: Optional[str] = None
+    model: Optional[str] = None
+    plan_model: Optional[str] = None
+    qa_model: Optional[str] = None
+    max_retries: Optional[int] = None
+    depends_on: Optional[str] = None
 
 
 class TaskReorder(BaseModel):
