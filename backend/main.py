@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconn
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
+from sqlalchemy import func, or_
 
 from fastapi.staticfiles import StaticFiles
 
@@ -49,6 +50,21 @@ app.add_middleware(
 
 # Global memory client (initialized on startup)
 memory_client: MemoryClient = None  # type: ignore[assignment]
+
+
+def _parse_csv_values(raw: Optional[str]) -> list[str]:
+    if not raw:
+        return []
+    return [v.strip() for v in raw.split(",") if v.strip()]
+
+
+def _parse_iso_datetime(raw: Optional[str], field_name: str) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid {field_name}; expected ISO-8601 datetime") from exc
 
 
 def _is_in_window(settings: dict) -> bool:
@@ -486,6 +502,73 @@ def list_tasks(session: Session = Depends(get_session)):
     return tasks
 
 
+@app.get("/tasks/search")
+def search_tasks(
+    q: Optional[str] = None,
+    status: Optional[str] = None,
+    mode: Optional[str] = None,
+    workspace: Optional[str] = None,
+    failure_only: bool = False,
+    created_after: Optional[str] = None,
+    created_before: Optional[str] = None,
+    sort: str = "newest",
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+):
+    statuses = _parse_csv_values(status)
+    modes = _parse_csv_values(mode)
+    created_after_dt = _parse_iso_datetime(created_after, "created_after")
+    created_before_dt = _parse_iso_datetime(created_before, "created_before")
+
+    if limit < 1 or limit > 200:
+        raise HTTPException(400, "limit must be between 1 and 200")
+    if offset < 0:
+        raise HTTPException(400, "offset must be >= 0")
+
+    query = select(Task)
+    count_query = select(func.count()).select_from(Task)
+
+    if q:
+        pattern = f"%{q}%"
+        condition = or_(Task.title.ilike(pattern), Task.description.ilike(pattern))
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if statuses:
+        condition = Task.status.in_(statuses)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if modes:
+        condition = Task.mode.in_(modes)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if workspace:
+        condition = Task.workspace == workspace
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if failure_only:
+        condition = Task.status == "failed"
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if created_after_dt:
+        condition = Task.created_at >= created_after_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if created_before_dt:
+        condition = Task.created_at <= created_before_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+
+    if sort == "oldest":
+        query = query.order_by(Task.created_at.asc())
+    else:
+        query = query.order_by(Task.created_at.desc())
+
+    items = session.exec(query.offset(offset).limit(limit)).all()
+    total = session.exec(count_query).one()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @app.post("/tasks", status_code=201)
 def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
     task = Task(
@@ -598,6 +681,84 @@ def list_runs(task_id: Optional[str] = None, session: Session = Depends(get_sess
     return session.exec(query.order_by(Run.started_at.desc())).all()
 
 
+@app.get("/runs/search")
+def search_runs(
+    q: Optional[str] = None,
+    task_id: Optional[str] = None,
+    status: Optional[str] = None,
+    phase: Optional[str] = None,
+    workspace: Optional[str] = None,
+    failure_only: bool = False,
+    started_after: Optional[str] = None,
+    started_before: Optional[str] = None,
+    sort: str = "newest",
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+):
+    statuses = _parse_csv_values(status)
+    phases = _parse_csv_values(phase)
+    started_after_dt = _parse_iso_datetime(started_after, "started_after")
+    started_before_dt = _parse_iso_datetime(started_before, "started_before")
+
+    if limit < 1 or limit > 200:
+        raise HTTPException(400, "limit must be between 1 and 200")
+    if offset < 0:
+        raise HTTPException(400, "offset must be >= 0")
+
+    query = select(Run, Task).join(Task, Task.id == Run.task_id)
+    count_query = select(func.count()).select_from(Run).join(Task, Task.id == Run.task_id)
+
+    if q:
+        pattern = f"%{q}%"
+        condition = or_(
+            Run.summary.ilike(pattern),
+            Run.error.ilike(pattern),
+            Task.title.ilike(pattern),
+            Task.description.ilike(pattern),
+        )
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if task_id:
+        condition = Run.task_id == task_id
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if statuses:
+        condition = Run.status.in_(statuses)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if phases:
+        condition = Run.current_phase.in_(phases)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if workspace:
+        condition = Task.workspace == workspace
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if failure_only:
+        condition = Run.status == "failed"
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if started_after_dt:
+        condition = Run.started_at >= started_after_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if started_before_dt:
+        condition = Run.started_at <= started_before_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+
+    if sort == "oldest":
+        query = query.order_by(Run.started_at.asc())
+    else:
+        query = query.order_by(Run.started_at.desc())
+
+    rows = session.exec(query.offset(offset).limit(limit)).all()
+    items = [{**run.model_dump(), "task": task.model_dump()} for run, task in rows]
+    total = session.exec(count_query).one()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @app.get("/runs/{run_id}")
 def get_run(run_id: str, session: Session = Depends(get_session)):
     run = session.get(Run, run_id)
@@ -677,6 +838,85 @@ def list_run_phases(run_id: str, session: Session = Depends(get_session)):
         .order_by(RunPhase.started_at)
     ).all()
     return [p.model_dump() for p in phases]
+
+
+@app.get("/run-events/search")
+def search_run_events(
+    q: Optional[str] = None,
+    run_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    started_after: Optional[str] = None,
+    started_before: Optional[str] = None,
+    sort: str = "newest",
+    limit: int = 100,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+):
+    event_types = _parse_csv_values(event_type)
+    started_after_dt = _parse_iso_datetime(started_after, "started_after")
+    started_before_dt = _parse_iso_datetime(started_before, "started_before")
+
+    if limit < 1 or limit > 300:
+        raise HTTPException(400, "limit must be between 1 and 300")
+    if offset < 0:
+        raise HTTPException(400, "offset must be >= 0")
+
+    query = (
+        select(RunEvent, Run, Task)
+        .join(Run, Run.id == RunEvent.run_id)
+        .join(Task, Task.id == Run.task_id)
+    )
+    count_query = (
+        select(func.count())
+        .select_from(RunEvent)
+        .join(Run, Run.id == RunEvent.run_id)
+        .join(Task, Task.id == Run.task_id)
+    )
+
+    if q:
+        pattern = f"%{q}%"
+        condition = RunEvent.content.ilike(pattern)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if run_id:
+        condition = RunEvent.run_id == run_id
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if task_id:
+        condition = Run.task_id == task_id
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if event_types:
+        condition = RunEvent.type.in_(event_types)
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if started_after_dt:
+        condition = RunEvent.timestamp >= started_after_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+    if started_before_dt:
+        condition = RunEvent.timestamp <= started_before_dt
+        query = query.where(condition)
+        count_query = count_query.where(condition)
+
+    if sort == "oldest":
+        query = query.order_by(RunEvent.timestamp.asc())
+    else:
+        query = query.order_by(RunEvent.timestamp.desc())
+
+    rows = session.exec(query.offset(offset).limit(limit)).all()
+    items = [
+        {
+            **event.model_dump(),
+            "run_status": run.status,
+            "task_id": task.id,
+            "task_title": task.title,
+        }
+        for event, run, task in rows
+    ]
+    total = session.exec(count_query).one()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 # ===========================================================================

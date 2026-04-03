@@ -21,8 +21,19 @@ async function apiFetch(path, { method = 'GET', body, ...opts } = {}) {
   return res.json()
 }
 
+function buildQuery(params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    query.set(key, String(value))
+  })
+  const asString = query.toString()
+  return asString ? `?${asString}` : ''
+}
+
 // Tasks
 export const getTasks = () => apiFetch('/tasks')
+export const searchTasks = (params) => apiFetch(`/tasks/search${buildQuery(params)}`)
 export const createTask = (body) => apiFetch('/tasks', { method: 'POST', body })
 export const updateTask = (id, body) => apiFetch(`/tasks/${id}`, { method: 'PUT', body })
 export const deleteTask = (id) => apiFetch(`/tasks/${id}`, { method: 'DELETE' })
@@ -31,8 +42,10 @@ export const runTask = (id) => apiFetch(`/tasks/${id}/run`, { method: 'POST' })
 
 // Runs
 export const getRuns = (task_id) => apiFetch(`/runs${task_id ? `?task_id=${task_id}` : ''}`)
+export const searchRuns = (params) => apiFetch(`/runs/search${buildQuery(params)}`)
 export const getRun = (id) => apiFetch(`/runs/${id}`)
 export const abortRun = (id) => apiFetch(`/runs/${id}/abort`, { method: 'POST' })
+export const searchRunEvents = (params) => apiFetch(`/run-events/search${buildQuery(params)}`)
 
 function _projectParam(projectId) {
   return projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''

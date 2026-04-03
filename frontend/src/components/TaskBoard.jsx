@@ -24,6 +24,7 @@ const COLUMNS = [
   { key: 'review',  label: 'Review'  },
   { key: 'done',    label: 'Done'    },
 ]
+const FILTER_PRESETS_KEY = 'forge:task-filter-presets'
 
 // Map task statuses to board columns
 function getColumnKey(status) {
@@ -43,6 +44,11 @@ export default function TaskBoard() {
   const [actionError, setActionError] = useState(null)
   const [pipelineStatus, setPipelineStatus] = useState(null)
   const [pipelineActing, setPipelineActing] = useState(false)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [modeFilter, setModeFilter] = useState('')
+  const [sortOrder, setSortOrder] = useState('newest')
+  const [savedPresets, setSavedPresets] = useState([])
   const navigate = useNavigate()
 
   // Poll pipeline status
@@ -55,6 +61,14 @@ export default function TaskBoard() {
   useEffect(() => {
     getTaskTemplates().then(setTaskTemplates).catch(() => setTaskTemplates([]))
   }, [])
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(FILTER_PRESETS_KEY)
+      setSavedPresets(raw ? JSON.parse(raw) : [])
+    } catch (_) {
+      setSavedPresets([])
+    }
+  }, [])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
@@ -64,14 +78,48 @@ export default function TaskBoard() {
     return () => window.removeEventListener('forge:new-task', handler)
   }, [])
 
-  const pendingTasks = tasks.filter((t) => t.status === 'pending')
+  const filteredTasks = [...tasks]
+    .filter((task) => {
+      if (statusFilter && task.status !== statusFilter) return false
+      if (modeFilter && task.mode !== modeFilter) return false
+      if (search) {
+        const haystack = `${task.title} ${task.description}`.toLowerCase()
+        if (!haystack.includes(search.toLowerCase())) return false
+      }
+      return true
+    })
+    .sort((a, b) => {
+      if (sortOrder === 'oldest') return new Date(a.created_at) - new Date(b.created_at)
+      return new Date(b.created_at) - new Date(a.created_at)
+    })
+
+  const pendingTasks = filteredTasks.filter((t) => t.status === 'pending')
   const pendingIds = pendingTasks.map((t) => t.id)
+
+  const saveCurrentPreset = () => {
+    const name = prompt('Preset name?')
+    if (!name) return
+    const next = [
+      ...savedPresets.filter((p) => p.name !== name),
+      { name, search, status: statusFilter, mode: modeFilter, sort: sortOrder },
+    ]
+    setSavedPresets(next)
+    window.localStorage.setItem(FILTER_PRESETS_KEY, JSON.stringify(next))
+  }
+
+  const applyPreset = (preset) => {
+    setSearch(preset.search || '')
+    setStatusFilter(preset.status || '')
+    setModeFilter(preset.mode || '')
+    setSortOrder(preset.sort || 'newest')
+  }
 
   const handleDragEnd = async ({ active, over }) => {
     if (!over || active.id === over.id) return
-    const oldIdx = pendingTasks.findIndex((t) => t.id === active.id)
-    const newIdx = pendingTasks.findIndex((t) => t.id === over.id)
-    const reordered = arrayMove(pendingTasks, oldIdx, newIdx)
+    const allPending = tasks.filter((t) => t.status === 'pending')
+    const oldIdx = allPending.findIndex((t) => t.id === active.id)
+    const newIdx = allPending.findIndex((t) => t.id === over.id)
+    const reordered = arrayMove(allPending, oldIdx, newIdx)
     // Optimistic update
     const nonPending = tasks.filter((t) => t.status !== 'pending')
     setTasks([...reordered, ...nonPending])
@@ -255,9 +303,78 @@ export default function TaskBoard() {
         </div>
       )}
 
+      <div className="mb-4 rounded border border-gray-700 bg-gray-800/60 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search title/description…"
+            className="px-3 py-1.5 text-sm rounded bg-gray-900 border border-gray-700 min-w-[220px]"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-2 py-1.5 text-sm rounded bg-gray-900 border border-gray-700"
+          >
+            <option value="">All statuses</option>
+            <option value="pending">pending</option>
+            <option value="planning">planning</option>
+            <option value="building">building</option>
+            <option value="qa">qa</option>
+            <option value="review">review</option>
+            <option value="done">done</option>
+            <option value="failed">failed</option>
+          </select>
+          <select
+            value={modeFilter}
+            onChange={(e) => setModeFilter(e.target.value)}
+            className="px-2 py-1.5 text-sm rounded bg-gray-900 border border-gray-700"
+          >
+            <option value="">All modes</option>
+            <option value="autonomous">autonomous</option>
+            <option value="supervised">supervised</option>
+          </select>
+          <select
+            value={sortOrder}
+            onChange={(e) => setSortOrder(e.target.value)}
+            className="px-2 py-1.5 text-sm rounded bg-gray-900 border border-gray-700"
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+          </select>
+          <button onClick={saveCurrentPreset} className="px-2 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600">
+            Save preset
+          </button>
+          <button
+            onClick={() => {
+              setSearch('')
+              setStatusFilter('')
+              setModeFilter('')
+              setSortOrder('newest')
+            }}
+            className="px-2 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600"
+          >
+            Reset
+          </button>
+        </div>
+        {savedPresets.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {savedPresets.map((preset) => (
+              <button
+                key={preset.name}
+                onClick={() => applyPreset(preset)}
+                className="px-2 py-1 text-xs rounded-full bg-gray-700 hover:bg-gray-600"
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-4 gap-4">
         {COLUMNS.map((col) => {
-          const colTasks = tasks.filter((t) => getColumnKey(t.status) === col.key)
+          const colTasks = filteredTasks.filter((t) => getColumnKey(t.status) === col.key)
           const isPending = col.key === 'pending'
 
           const cards = colTasks.map((task) => (
