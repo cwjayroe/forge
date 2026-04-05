@@ -31,6 +31,20 @@ const EMPTY = {
   scheduled_for: '',
 }
 
+const STEP_LABELS = ['Basics', 'Workspace', 'Execution', 'Dependencies']
+
+function validateStep(stepNum, form) {
+  const errors = {}
+  if (stepNum === 1) {
+    if (!form.title.trim()) errors.title = 'Title is required'
+    if (!form.description.trim()) errors.description = 'Description is required'
+  }
+  if (stepNum === 2) {
+    if (!form.workspace.trim()) errors.workspace = 'Workspace is required'
+  }
+  return errors
+}
+
 export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, onSaved }) {
   const { tasks } = useTasksContext()
   const [form, setForm] = useState(EMPTY)
@@ -42,6 +56,8 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
   const [showTaskTemplates, setShowTaskTemplates] = useState(false)
   const [skills, setSkills] = useState([])
   const [projects, setProjects] = useState([])
+  const [step, setStep] = useState(1)
+  const [stepErrors, setStepErrors] = useState({})
   const overlayRef = useRef(null)
 
   // Load skills on mount
@@ -51,6 +67,8 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
 
   // Populate form on open
   useEffect(() => {
+    setStep(1)
+    setStepErrors({})
     if (task) {
       setForm({
         title: task.title || '',
@@ -109,6 +127,7 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
   }, [task, cloneFrom, initialTemplate])
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
+  const clearError = (key) => setStepErrors((e) => ({ ...e, [key]: undefined }))
 
   // Load templates from workspace directory
   useEffect(() => {
@@ -144,8 +163,33 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
     }))
   }
 
+  const otherTasks = tasks.filter((t) => !task || t.id !== task.id)
+  const totalSteps = otherTasks.length > 0 ? 4 : 3
+  const isLastStep = step === totalSteps
+
+  // Guard: if tasks change and step 4 disappears, clamp to last step
+  useEffect(() => {
+    if (step > totalSteps) setStep(totalSteps)
+  }, [totalSteps, step])
+
+  const handleNext = () => {
+    const errors = validateStep(step, form)
+    if (Object.keys(errors).length) {
+      setStepErrors(errors)
+      return
+    }
+    setStepErrors({})
+    setStep((s) => s + 1)
+  }
+
+  const handleBack = () => {
+    setStepErrors({})
+    setStep((s) => s - 1)
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (!isLastStep) { handleNext(); return }
     setSaving(true)
     setError(null)
     const body = {
@@ -180,15 +224,13 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
     if (e.target === overlayRef.current) onClose()
   }
 
-  const otherTasks = tasks.filter((t) => !task || t.id !== task.id)
-
   return (
     <div
       ref={overlayRef}
       onClick={handleOverlayClick}
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
     >
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-xl shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-lg font-semibold">{task ? 'Edit Task' : cloneFrom ? 'Clone Task' : 'New Task'}</h2>
           <button
@@ -199,246 +241,279 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
           </button>
         </div>
 
+        <StepIndicator current={step} total={totalSteps} labels={STEP_LABELS} />
+
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm text-gray-400">Title *</label>
-              {(templates.length > 0 || taskTemplates.length > 0) && (
-                <div className="flex items-center gap-2">
-                  {taskTemplates.length > 0 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTaskTemplates((v) => !v)
-                          setShowTemplates(false)
-                        }}
-                        className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
-                      >
-                        Create from template…
-                      </button>
-                      {showTaskTemplates && (
-                        <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[220px] max-h-56 overflow-y-auto">
-                          {taskTemplates.map((tpl) => (
-                            <button
-                              key={tpl.id}
-                              type="button"
-                              onClick={() => applyTaskTemplate(tpl)}
-                              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
-                            >
-                              <span className="block text-gray-200 truncate">{tpl.name}</span>
-                              <span className="block text-gray-500 truncate">{tpl.title_template}</span>
-                            </button>
-                          ))}
+
+          {/* Step 1 — Basics */}
+          {step === 1 && (
+            <>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm text-gray-400">Title</label>
+                  {(templates.length > 0 || taskTemplates.length > 0) && (
+                    <div className="flex items-center gap-2">
+                      {taskTemplates.length > 0 && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowTaskTemplates((v) => !v)
+                              setShowTemplates(false)
+                            }}
+                            className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                          >
+                            Create from template…
+                          </button>
+                          {showTaskTemplates && (
+                            <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[220px] max-h-56 overflow-y-auto">
+                              {taskTemplates.map((tpl) => (
+                                <button
+                                  key={tpl.id}
+                                  type="button"
+                                  onClick={() => applyTaskTemplate(tpl)}
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
+                                >
+                                  <span className="block text-gray-200 truncate">{tpl.name}</span>
+                                  <span className="block text-gray-500 truncate">{tpl.title_template}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
-                  )}
-                  {templates.length > 0 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTemplates((v) => !v)
-                          setShowTaskTemplates(false)
-                        }}
-                        className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
-                      >
-                        Load from file…
-                      </button>
-                      {showTemplates && (
-                        <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[200px] max-h-48 overflow-y-auto">
-                          {templates.map((tpl) => (
-                            <button
-                              key={tpl.path}
-                              type="button"
-                              onClick={() => applyTemplate(tpl)}
-                              className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
-                            >
-                              <span className="block text-gray-200 truncate">{tpl.title}</span>
-                              <span className="block text-gray-500 truncate">{tpl.name}</span>
-                            </button>
-                          ))}
+                      {templates.length > 0 && (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowTemplates((v) => !v)
+                              setShowTaskTemplates(false)
+                            }}
+                            className="text-xs text-orange-400 hover:text-orange-300 transition-colors"
+                          >
+                            Load from file…
+                          </button>
+                          {showTemplates && (
+                            <div className="absolute right-0 top-6 z-10 bg-gray-700 border border-gray-600 rounded shadow-lg min-w-[200px] max-h-48 overflow-y-auto">
+                              {templates.map((tpl) => (
+                                <button
+                                  key={tpl.path}
+                                  type="button"
+                                  onClick={() => applyTemplate(tpl)}
+                                  className="w-full text-left px-3 py-2 text-xs hover:bg-gray-600 transition-colors"
+                                >
+                                  <span className="block text-gray-200 truncate">{tpl.title}</span>
+                                  <span className="block text-gray-500 truncate">{tpl.name}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-            <input
-              required
-              className={input}
-              value={form.title}
-              onChange={(e) => set('title', e.target.value)}
-              placeholder="Implement feature X"
-            />
-          </div>
-
-          {skills.length > 0 && (
-            <Field label="Skill">
-              <select
-                className={input}
-                value={form.skill_id || ''}
-                onChange={(e) => {
-                  const id = e.target.value || null
-                  set('skill_id', id)
-                  if (id) {
-                    const skill = skills.find((s) => s.id === id)
-                    if (skill?.template_description && !form.description.trim()) {
-                      set('description', skill.template_description)
-                    }
-                  }
-                }}
-              >
-                <option value="">General purpose</option>
-                {skills.map((s) => (
-                  <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
-                ))}
-              </select>
-              {form.skill_id && (() => {
-                const s = skills.find((x) => x.id === form.skill_id)
-                return s ? <p className="text-xs text-gray-500 mt-1">{s.description}</p> : null
-              })()}
-            </Field>
-          )}
-
-          <Field label="Description *">
-            <textarea
-              required
-              className={`${input} h-28 resize-none`}
-              value={form.description}
-              onChange={(e) => set('description', e.target.value)}
-              placeholder="Describe what the agent should do…"
-            />
-          </Field>
-
-          <Field label="Workspace">
-            <input
-              required
-              className={input}
-              value={form.workspace}
-              onChange={(e) => set('workspace', e.target.value)}
-              placeholder="/path/to/project"
-            />
-          </Field>
-
-          {projects.length > 0 && (
-            <Field label="Project">
-              <select
-                className={input}
-                value={form.project_id || ''}
-                onChange={(e) => set('project_id', e.target.value || null)}
-              >
-                <option value="">No project</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </Field>
-          )}
-
-          <Field label="Spec file path">
-            <input
-              className={input}
-              value={form.spec_path}
-              onChange={(e) => set('spec_path', e.target.value)}
-              placeholder="docs/spec.md (optional)"
-            />
-          </Field>
-
-          <div className="flex gap-4">
-            <Field label="Mode" className="flex-1">
-              <div className="flex rounded overflow-hidden border border-gray-600">
-                {['autonomous', 'supervised'].map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => set('mode', m)}
-                    className={`flex-1 py-1.5 text-sm capitalize transition-colors ${
-                      form.mode === m
-                        ? 'bg-orange-500 text-white'
-                        : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                    }`}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            </Field>
-
-            <Field label="Model" className="flex-1">
-              <select
-                className={input}
-                value={form.model}
-                onChange={(e) => set('model', e.target.value)}
-              >
-                {MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          {form.model.startsWith('claude-code/') || form.model.startsWith('cursor-code/') ? (
-            <div className="border border-gray-700 rounded p-3">
-              <p className="text-xs text-gray-500">
-                {form.model.startsWith('cursor-code/') ? 'Cursor' : 'Claude Code'} handles planning, building, and QA via the{' '}
-                <span className="text-gray-300">
-                  {(() => {
-                    const s = skills.find((x) => x.id === form.skill_id)
-                    const cmd = form.model.startsWith('cursor-code/') ? s?.cursor_skill : s?.claude_code_skill
-                    return cmd || '/feature-plan-and-build'
-                  })()}
-                </span>{' '}
-                skill — no per-phase model config needed.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3 border border-gray-700 rounded p-3">
-              <p className="text-xs text-gray-500 uppercase tracking-wider">Phase Models</p>
-              <div className="flex gap-4">
-                <Field label="Plan model" className="flex-1">
-                  <select
-                    className={input}
-                    value={form.plan_model}
-                    onChange={(e) => set('plan_model', e.target.value)}
-                  >
-                    <option value="">Use build model</option>
-                    {MODEL_OPTIONS.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="QA model" className="flex-1">
-                  <select
-                    className={input}
-                    value={form.qa_model}
-                    onChange={(e) => set('qa_model', e.target.value)}
-                  >
-                    <option value="">Use build model</option>
-                    {MODEL_OPTIONS.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              <Field label="Max QA retries">
                 <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  className={`${input} w-24`}
-                  value={form.max_retries}
-                  onChange={(e) => set('max_retries', parseInt(e.target.value) || 3)}
+                  className={input}
+                  value={form.title}
+                  onChange={(e) => { set('title', e.target.value); clearError('title') }}
+                  placeholder="Implement feature X"
+                />
+                {stepErrors.title && <p className="text-red-400 text-xs mt-1">{stepErrors.title}</p>}
+              </div>
+
+              {skills.length > 0 && (
+                <Field label="Skill">
+                  <select
+                    className={input}
+                    value={form.skill_id || ''}
+                    onChange={(e) => {
+                      const id = e.target.value || null
+                      set('skill_id', id)
+                      if (id) {
+                        const skill = skills.find((s) => s.id === id)
+                        if (skill?.template_description && !form.description.trim()) {
+                          set('description', skill.template_description)
+                        }
+                      }
+                    }}
+                  >
+                    <option value="">General purpose</option>
+                    {skills.map((s) => (
+                      <option key={s.id} value={s.id}>{s.icon} {s.name}</option>
+                    ))}
+                  </select>
+                  {form.skill_id && (() => {
+                    const s = skills.find((x) => x.id === form.skill_id)
+                    return s ? <p className="text-xs text-gray-500 mt-1">{s.description}</p> : null
+                  })()}
+                </Field>
+              )}
+
+              <Field label="Description">
+                <textarea
+                  className={`${input} h-28 resize-none`}
+                  value={form.description}
+                  onChange={(e) => { set('description', e.target.value); clearError('description') }}
+                  placeholder="Describe what the agent should do…"
+                />
+                {stepErrors.description && <p className="text-red-400 text-xs mt-1">{stepErrors.description}</p>}
+              </Field>
+            </>
+          )}
+
+          {/* Step 2 — Workspace */}
+          {step === 2 && (
+            <>
+              <Field label="Workspace">
+                <input
+                  className={input}
+                  value={form.workspace}
+                  onChange={(e) => { set('workspace', e.target.value); clearError('workspace') }}
+                  placeholder="/path/to/project"
+                />
+                {stepErrors.workspace && <p className="text-red-400 text-xs mt-1">{stepErrors.workspace}</p>}
+              </Field>
+
+              {projects.length > 0 && (
+                <Field label="Project">
+                  <select
+                    className={input}
+                    value={form.project_id || ''}
+                    onChange={(e) => set('project_id', e.target.value || null)}
+                  >
+                    <option value="">No project</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+
+              <Field label="Spec file path">
+                <input
+                  className={input}
+                  value={form.spec_path}
+                  onChange={(e) => set('spec_path', e.target.value)}
+                  placeholder="docs/spec.md (optional)"
                 />
               </Field>
-            </div>
+            </>
           )}
 
-          {otherTasks.length > 0 && (
+          {/* Step 3 — Execution */}
+          {step === 3 && (
+            <>
+              <div className="flex gap-4">
+                <Field label="Mode" className="flex-1">
+                  <div className="flex rounded overflow-hidden border border-gray-600">
+                    {['autonomous', 'supervised'].map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => set('mode', m)}
+                        className={`flex-1 py-1.5 text-sm capitalize transition-colors ${
+                          form.mode === m
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="Model" className="flex-1">
+                  <select
+                    className={input}
+                    value={form.model}
+                    onChange={(e) => set('model', e.target.value)}
+                  >
+                    {MODEL_OPTIONS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              {form.model.startsWith('claude-code/') || form.model.startsWith('cursor-code/') ? (
+                <div className="border border-gray-700 rounded p-3">
+                  <p className="text-xs text-gray-500">
+                    {form.model.startsWith('cursor-code/') ? 'Cursor' : 'Claude Code'} handles planning, building, and QA via the{' '}
+                    <span className="text-gray-300">
+                      {(() => {
+                        const s = skills.find((x) => x.id === form.skill_id)
+                        const cmd = form.model.startsWith('cursor-code/') ? s?.cursor_skill : s?.claude_code_skill
+                        return cmd || '/feature-plan-and-build'
+                      })()}
+                    </span>{' '}
+                    skill — no per-phase model config needed.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3 border border-gray-700 rounded p-3">
+                  <p className="text-xs text-gray-500 uppercase tracking-wider">Phase Models</p>
+                  <div className="flex gap-4">
+                    <Field label="Plan model" className="flex-1">
+                      <select
+                        className={input}
+                        value={form.plan_model}
+                        onChange={(e) => set('plan_model', e.target.value)}
+                      >
+                        <option value="">Use build model</option>
+                        {MODEL_OPTIONS.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="QA model" className="flex-1">
+                      <select
+                        className={input}
+                        value={form.qa_model}
+                        onChange={(e) => set('qa_model', e.target.value)}
+                      >
+                        <option value="">Use build model</option>
+                        {MODEL_OPTIONS.map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <Field label="Max QA retries">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      className={`${input} w-24`}
+                      value={form.max_retries}
+                      onChange={(e) => set('max_retries', parseInt(e.target.value) || 3)}
+                    />
+                  </Field>
+                </div>
+              )}
+
+              <Field label="Schedule (optional)">
+                <input
+                  type="datetime-local"
+                  className={input}
+                  value={form.scheduled_for}
+                  onChange={(e) => set('scheduled_for', e.target.value)}
+                />
+                {form.scheduled_for && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Runs at {new Date(form.scheduled_for).toLocaleString()} (local time)
+                  </p>
+                )}
+              </Field>
+            </>
+          )}
+
+          {/* Step 4 — Dependencies (only when other tasks exist) */}
+          {step === 4 && otherTasks.length > 0 && (
             <Field label="Depends on">
-              <div className="bg-gray-700 border border-gray-600 rounded px-3 py-2 max-h-36 overflow-y-auto space-y-1">
+              <div className="bg-gray-700 border border-gray-600 rounded px-3 py-2 max-h-52 overflow-y-auto space-y-1">
                 {otherTasks.map((t) => (
                   <label
                     key={t.id}
@@ -457,40 +532,76 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
             </Field>
           )}
 
-          <Field label="Schedule (optional)">
-            <input
-              type="datetime-local"
-              className={input}
-              value={form.scheduled_for}
-              onChange={(e) => set('scheduled_for', e.target.value)}
-            />
-            {form.scheduled_for && (
-              <p className="text-xs text-gray-500 mt-1">
-                Runs at {new Date(form.scheduled_for).toLocaleString()} (local time)
-              </p>
-            )}
-          </Field>
-
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
-          <div className="flex gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-5 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded text-sm font-medium transition-colors"
-            >
-              {saving ? 'Saving…' : task ? 'Save changes' : 'Create task'}
-            </button>
+          <div className="flex items-center justify-between pt-2">
             <button
               type="button"
-              onClick={onClose}
-              className="px-5 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+              onClick={handleBack}
+              className={`px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors ${step === 1 ? 'invisible' : ''}`}
             >
-              Cancel
+              Back
             </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              {isLastStep ? (
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="px-5 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded text-sm font-medium transition-colors"
+                >
+                  {saving ? 'Saving…' : task ? 'Save changes' : 'Create task'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="px-5 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition-colors"
+                >
+                  Next
+                </button>
+              )}
+            </div>
           </div>
         </form>
       </div>
+    </div>
+  )
+}
+
+function StepIndicator({ current, total, labels }) {
+  return (
+    <div className="flex items-start mb-6">
+      {labels.slice(0, total).map((label, i) => {
+        const stepNum = i + 1
+        const isActive = stepNum === current
+        const isDone = stepNum < current
+        return (
+          <React.Fragment key={stepNum}>
+            {i > 0 && (
+              <div className={`flex-1 h-px mt-3 mx-1 ${isDone ? 'bg-orange-500' : 'bg-gray-600'}`} />
+            )}
+            <div className="flex flex-col items-center gap-1 shrink-0">
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors
+                ${isActive ? 'bg-orange-500 text-white' :
+                  isDone ? 'bg-orange-700 text-orange-200' :
+                  'bg-gray-700 text-gray-500'}`}
+              >
+                {isDone ? '✓' : stepNum}
+              </div>
+              <span className={`text-xs whitespace-nowrap ${isActive ? 'text-orange-400' : isDone ? 'text-orange-600' : 'text-gray-500'}`}>
+                {label}
+              </span>
+            </div>
+          </React.Fragment>
+        )
+      })}
     </div>
   )
 }
