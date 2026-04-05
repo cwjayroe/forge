@@ -229,9 +229,16 @@ async def _window_checker_loop() -> None:
                     set_window_paused(False)
                     if not is_pipeline_paused():
                         await check_ready_tasks(engine)
+                elif in_window and not is_window_paused() and not is_pipeline_paused():
+                    # Poll for per-task scheduled tasks that just became due
+                    await check_ready_tasks(engine)
+            else:
+                # Global schedule disabled — still fire per-task schedule check
+                if not is_pipeline_paused() and not is_window_paused():
+                    await check_ready_tasks(engine)
         except Exception:
             pass
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 
 _BUILTIN_SKILLS = [
@@ -417,6 +424,14 @@ _BUILTIN_TASK_TEMPLATES = [
 @app.on_event("startup")
 async def on_startup():
     create_db_and_tables()
+    # Lightweight column migrations (idempotent)
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE task ADD COLUMN scheduled_for DATETIME"))
+            conn.commit()
+        except Exception:
+            pass  # Column already exists
     # Seed built-in skills (idempotent by slug)
     with Session(engine) as session:
         for data in _BUILTIN_SKILLS:
@@ -822,6 +837,7 @@ def create_task(payload: TaskCreate, session: Session = Depends(get_session)):
         project_id=payload.project_id,
         depends_on=payload.depends_on,
         skill_id=payload.skill_id,
+        scheduled_for=payload.scheduled_for,
     )
 
     # Validate dependencies won't create cycles

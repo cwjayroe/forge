@@ -28,6 +28,7 @@ const EMPTY = {
   depends_on: [],
   skill_id: null,
   project_id: null,
+  scheduled_for: '',
 }
 
 export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, onSaved }) {
@@ -64,6 +65,9 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
         depends_on: task.depends_on ? task.depends_on.split(',').filter(Boolean) : [],
         skill_id: task.skill_id || null,
         project_id: task.project_id || null,
+        scheduled_for: task.scheduled_for
+          ? new Date(task.scheduled_for).toISOString().slice(0, 16)
+          : '',
       })
     } else if (cloneFrom) {
       setForm({
@@ -157,6 +161,7 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
       depends_on: form.depends_on.length ? form.depends_on.join(',') : null,
       skill_id: form.skill_id || null,
       project_id: form.project_id || null,
+      scheduled_for: form.scheduled_for ? new Date(form.scheduled_for).toISOString() : null,
     }
     try {
       const saved = task
@@ -451,6 +456,20 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
               </div>
             </Field>
           )}
+
+          <Field label="Schedule (optional)">
+            <input
+              type="datetime-local"
+              className={input}
+              value={form.scheduled_for}
+              onChange={(e) => set('scheduled_for', e.target.value)}
+            />
+            {form.scheduled_for && (
+              <p className="text-xs text-gray-500 mt-1">
+                Runs at {new Date(form.scheduled_for).toLocaleString()} (local time)
+              </p>
+            )}
+          </Field>
 
           {error && <p className="text-red-400 text-sm">{error}</p>}
 
