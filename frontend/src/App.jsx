@@ -3,8 +3,6 @@ import { NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-d
 import { getPipelineStatus } from './api'
 import { TasksProvider } from './TasksContext'
 import DependencyGraph from './components/DependencyGraph'
-import MemoryBrowser from './components/MemoryBrowser'
-import Projects from './components/Projects'
 import RunView from './components/RunView'
 import Settings from './components/Settings'
 import SkillLibrary from './components/SkillLibrary'
@@ -35,8 +33,6 @@ function NavBar() {
     <nav className="bg-gray-800 border-b border-gray-700 px-6 py-3 flex items-center gap-6">
       <span className="text-orange-400 font-bold text-lg tracking-tight">⚒ Forge</span>
       <NavLink to="/" end className={linkClass}>Board</NavLink>
-      <NavLink to="/memory" className={linkClass}>Memory</NavLink>
-      <NavLink to="/projects" className={linkClass}>Projects</NavLink>
       <NavLink to="/graph" className={linkClass}>Graph</NavLink>
       <NavLink to="/skills" className={linkClass}>Skills</NavLink>
       <NavLink to="/settings" className={linkClass}>Settings</NavLink>
@@ -54,7 +50,7 @@ function NavBar() {
         </div>
       )}
       <span className="ml-auto text-xs text-gray-600 hidden sm:block">
-        b·board &nbsp; m·memory &nbsp; p·projects &nbsp; g·graph &nbsp; k·skills &nbsp; s·settings &nbsp; n·new task
+        b·board &nbsp; g·graph &nbsp; k·skills &nbsp; s·settings &nbsp; n·new task
       </span>
     </nav>
   )
@@ -69,8 +65,6 @@ function KeyboardShortcuts() {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       switch (e.key) {
         case 'b': navigate('/'); break
-        case 'm': navigate('/memory'); break
-        case 'p': navigate('/projects'); break
         case 'g': navigate('/graph'); break
         case 'k': navigate('/skills'); break
         case 's': navigate('/settings'); break
@@ -92,8 +86,6 @@ export default function App() {
         <KeyboardShortcuts />
         <Routes>
           <Route path="/" element={<TaskBoard />} />
-          <Route path="/memory" element={<MemoryBrowser />} />
-          <Route path="/projects" element={<Projects />} />
           <Route path="/graph" element={<DependencyGraph />} />
           <Route path="/skills" element={<SkillLibrary />} />
           <Route path="/settings" element={<Settings />} />

@@ -16,7 +16,6 @@ from sqlalchemy import func, or_
 from fastapi.staticfiles import StaticFiles
 
 from .database import create_db_and_tables, engine, get_session, get_settings, save_settings
-from .memory import MemoryClient
 from pathlib import Path
 
 from .models import (
@@ -58,10 +57,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Global memory client (initialized on startup)
-memory_client: MemoryClient = None  # type: ignore[assignment]
-
 
 def _parse_csv_values(raw: Optional[str]) -> list[str]:
     if not raw:
@@ -421,13 +416,7 @@ _BUILTIN_TASK_TEMPLATES = [
 
 @app.on_event("startup")
 async def on_startup():
-    global memory_client
     create_db_and_tables()
-    s = get_settings()
-    memory_client = MemoryClient(
-        ollama_host=s.get('ollama_host', 'http://localhost:11434'),
-        memory_model=s.get('memory_model', 'llama3.2'),
-    )
     # Seed built-in skills (idempotent by slug)
     with Session(engine) as session:
         for data in _BUILTIN_SKILLS:
@@ -1301,51 +1290,6 @@ async def resume_pipeline_endpoint():
 @app.get("/pipeline/status")
 def pipeline_status_endpoint():
     return get_pipeline_status(engine)
-
-
-# ===========================================================================
-# Memory
-# ===========================================================================
-
-@app.get("/memory/projects")
-def list_memory_projects():
-    return memory_client.list_projects()
-
-
-@app.get("/memory/search")
-async def search_memory(q: str, project_id: Optional[str] = None):
-    results = await memory_client.search(q, project_id=project_id)
-    return results
-
-
-@app.get("/memory/list")
-async def list_memory(project_id: Optional[str] = None):
-    return await memory_client.list_all(project_id=project_id)
-
-
-@app.get("/memory/stats")
-async def memory_stats(project_id: Optional[str] = None):
-    return await memory_client.get_stats(project_id=project_id)
-
-
-class MemoryCreate(BaseModel):
-    content: str
-    metadata: Optional[dict] = None
-    project_id: Optional[str] = None
-
-
-@app.post("/memory", status_code=201)
-async def create_memory(payload: MemoryCreate):
-    meta = {**(payload.metadata or {}), **({"project_id": payload.project_id} if payload.project_id else {})}
-    memory_id = await memory_client.store(payload.content, meta)
-    return {"id": memory_id}
-
-
-@app.delete("/memory/{memory_id}", status_code=204)
-async def delete_memory(memory_id: str, project_id: Optional[str] = None):
-    deleted = await memory_client.delete(memory_id, project_id=project_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Memory entry not found")
 
 
 # ===========================================================================

@@ -1,0 +1,9 @@
+{
+  "pythonVersion": "3.12",
+  "pythonPath": "/Users/willjayroe/Desktop/repos/forge/.env/bin/python",
+  "venvPath": "/Users/willjayroe/Desktop/repos/forge/.env",
+  "extraPaths": [
+    "../memories"
+  ],
+  "typeCheckingMode": "off"
+}

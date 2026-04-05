@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { createTask, getProjects, getSettings, getSkills, getTaskTemplates, listTemplates, searchMemory, updateTask } from '../api'
+import { createTask, getProjects, getSettings, getSkills, getTaskTemplates, listTemplates, updateTask } from '../api'
 import { useTasksContext } from '../TasksContext'
 
 const MODEL_OPTIONS = [
@@ -35,8 +35,6 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
-  const [memoryPreview, setMemoryPreview] = useState([])
-  const [previewLoading, setPreviewLoading] = useState(false)
   const [templates, setTemplates] = useState([])
   const [taskTemplates, setTaskTemplates] = useState([])
   const [showTemplates, setShowTemplates] = useState(false)
@@ -107,23 +105,6 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
   }, [task, cloneFrom, initialTemplate])
 
   const set = (key, value) => setForm((f) => ({ ...f, [key]: value }))
-
-  // Debounced memory preview on title change
-  useEffect(() => {
-    if (form.title.trim().length < 3) {
-      setMemoryPreview([])
-      return
-    }
-    setPreviewLoading(true)
-    const timer = setTimeout(async () => {
-      try {
-        const results = await searchMemory(form.title)
-        setMemoryPreview(results.slice(0, 3))
-      } catch (_) {}
-      finally { setPreviewLoading(false) }
-    }, 500)
-    return () => clearTimeout(timer)
-  }, [form.title])
 
   // Load templates from workspace directory
   useEffect(() => {
@@ -326,19 +307,6 @@ export default function TaskEditor({ task, cloneFrom, initialTemplate, onClose, 
               placeholder="Describe what the agent should do…"
             />
           </Field>
-
-          {(previewLoading || memoryPreview.length > 0) && (
-            <Field label="What Forge knows about this task">
-              {previewLoading
-                ? <p className="text-xs text-gray-500">Searching memory…</p>
-                : memoryPreview.map((m) => (
-                    <div key={m.id} className="text-xs bg-gray-700/50 rounded px-2 py-1.5 mb-1 text-gray-300 line-clamp-2">
-                      {m.content}
-                    </div>
-                  ))
-              }
-            </Field>
-          )}
 
           <Field label="Workspace">
             <input
