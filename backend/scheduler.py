@@ -154,6 +154,11 @@ async def check_ready_tasks(engine) -> list[str]:
                     if not all_done:
                         continue
 
+            # Per-task schedule gate
+            if task.scheduled_for is not None:
+                if datetime.utcnow() < task.scheduled_for:
+                    continue
+
             # Start this task
             run = Run(task_id=task.id)
             session.add(run)

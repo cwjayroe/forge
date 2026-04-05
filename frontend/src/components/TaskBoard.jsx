@@ -501,6 +501,22 @@ function TaskCard({ task, onEdit, onRun, onDelete, onClick, onClone, allTasks })
         <span className="text-xs text-gray-500 truncate max-w-[140px]" title={task.model}>
           {task.model.split('/')[1] || task.model}
         </span>
+        {task.scheduled_for && (() => {
+          const scheduledTime = new Date(task.scheduled_for)
+          const isFuture = scheduledTime > new Date()
+          return (
+            <span
+              className={`text-xs px-1.5 py-0.5 rounded ${
+                isFuture ? 'bg-indigo-900/60 text-indigo-300' : 'bg-gray-700 text-gray-400'
+              }`}
+              title={`Scheduled: ${scheduledTime.toLocaleString()}`}
+            >
+              {isFuture ? 'Scheduled' : 'Due'}{' '}
+              {scheduledTime.toLocaleDateString([], { month: 'short', day: 'numeric' })}{' '}
+              {scheduledTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )
+        })()}
       </div>
 
       {/* Actions */}

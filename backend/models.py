@@ -48,6 +48,7 @@ class Task(SQLModel, table=True):
     order: int = 0
     branch_name: Optional[str] = None                 # git branch created for this task
     skill_id: Optional[str] = None                    # FK to Skill.id
+    scheduled_for: Optional[datetime] = None          # UTC; None = run when deps ready
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
@@ -143,6 +144,7 @@ class TaskCreate(BaseModel):
     project_id: Optional[str] = None
     depends_on: Optional[str] = None
     skill_id: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
 
 
 class TaskUpdate(BaseModel):
@@ -159,6 +161,7 @@ class TaskUpdate(BaseModel):
     project_id: Optional[str] = None
     depends_on: Optional[str] = None
     skill_id: Optional[str] = None
+    scheduled_for: Optional[datetime] = None
 
 
 class ProjectCreate(BaseModel):
